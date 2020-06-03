@@ -1,0 +1,15 @@
+[package]
+name = "yaque"
+version = "0.1.0"
+authors = ["Pedro Arruda <pedro.arruda@quero.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+notify = "5.0.0-pre.2"
+
+[dev-dependencies]
+rand = "0.7.3"
+rand_xorshift = "0.2.0"
+futures = "0.3.5"
