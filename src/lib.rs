@@ -16,18 +16,62 @@
 //! application. It will work smoothly with `tokio`, with `async-std` or any
 //! other executor of your choice.
 //!
-//! Yaque is also agnostic to the persistenceence method _of the queue state_. Even
-//! though data will be written to filesystem, the state of the queue, that is,
-//! the positions of the reader and of the sender, may be saved elsewhere. Examples
-//! include a database, S3 or any other external persistenceence service. For your
-//! conveinence, a local `FilePersistence` is provided that will record the
-//! queue state to the queue folder itself.  
-//!
-//! ## To do's:
-//!
-//! * Clear queue.
-//! * Channel convenience.
-//! * Send batch.
+//! ## Sample usage
+//! 
+//! To create a new queue, just use the [`channel`] function, passing a
+//! directory path on which to mount the queue. If the directiory does not exist
+//! on creation, it (and possibly all its parent directories) will be created.
+//! ```
+//! use yaque::channel;
+//! 
+//! let (mut sender, mut receiver) = channel("data/my-queue").await.unwrap();
+//! ```
+//! You can also use [`Sender::open`] and [`Receiver::open`] to open only one half
+//! of the channel, if you need to.
+//! 
+//! The usage is similar to the MPSC channel in the standard library, except
+//! that the receiving method, [`Receiver::recv`] is assynchronous. Writing to
+//! the queue with the sender is basically lock-free and atomic.
+//! ```
+//! sender.send(b"some data").unwrap();
+//! let data = receiver.recv().await.unwrap();
+//! 
+//! assert_eq!(&*data, b"some data");
+//! ```
+//! The returned value `data` is a kind of guard that implements `Deref` and
+//! `DerefMut` on the undelying type.
+//! 
+//! ## [`RecvGuard`] and transactional behavior
+//! 
+//! One important thing to notice is that reads from the queue are
+//! _transactional_. The `Receiver::recv` returns a [`RecvGuard`] that only
+//! commits the dequeing operation, that is, makes it official in the disk,
+//! when dropped. You can override this behavior using [`RecvGuard::rollback`],
+//! although this will inccur in one more filesystem operation. If a thread
+//! panics while holding a `RecvGuard`, instead of commiting the dequeueing
+//! operation, it will _try_ to rollback. If the rollback operation is
+//! unsuccessful, the operation will be commited (possibly with data loss),
+//! since to panic while panicking results in the process being aborted, which
+//! is Really Bad. 
+//! 
+//! ## Batches
+//! 
+//! You can use the `yaque` queue to send and receive batches of data ,
+//! too. The guarantees are the same as with single reads and writes, except
+//! that you may save on OS overhead when you send items, since only one disk
+//! operation is made. See [`Sender::send_batch`], [`Receiver::recv_batch`] and
+//! [`Receiver::recv_while`] for more information on receiver batches.
+//! 
+//! ## Known issues and next steps
+//! 
+//! * This is a brand new project. Although I have tested it and it will
+//! certainly not implode your computer, don't trust your life on it yet.
+//! * Wastes too much kernel time when the queue is small enough and the sender
+//! sends many frequent small messages non-atomically.
+//! * I intend to make this an MPSC queue in the future.
+//! * There are probably unknown bugs hidden in some corner case. If you find
+//! one, please fill an issue in GitHub. Pull requests and contributions are
+//! also greatly appreciated.
 
 mod state;
 mod sync;
@@ -39,8 +83,7 @@ use std::path::{Path, PathBuf};
 
 use state::{FileGuard, QueueState};
 use sync::TailFollower;
-
-pub use state::FilePersistence;
+use state::FilePersistence;
 
 /// The name of segment file in the queue folder.
 fn segment_filename<P: AsRef<Path>>(base: P, segment: u64) -> PathBuf {
@@ -120,19 +163,52 @@ impl Sender {
         })
     }
 
-    /// Sends some data into the queue. One send is always atomic.
-    pub fn send(&mut self, data: &[u8]) -> io::Result<()> {
+    /// Just writes to the internal buffer, but doesn't flush it.
+    fn write(&mut self, data: &[u8]) -> io::Result<()> {
         // Get length of the data and write the header:
-        let len = data.len();
+        let len = data.as_ref().len();
         assert!(len < std::u32::MAX as usize);
         let header = (len as u32).to_be_bytes();
 
         // Write stuff to the file:
         self.file.write_all(&header)?;
-        self.file.write_all(data)?;
+        self.file.write_all(data.as_ref())?;
+        self.state.advance_position(4 + len as u64);
+
+        Ok(())
+    }
+
+    /// Sends some data into the queue. One send is always atomic.
+    pub fn send<D: AsRef<[u8]>>(&mut self, data: D) -> io::Result<()> {
+        // Write to the queue and flush:
+        self.write(data.as_ref())?;
         self.file.flush()?; // guarantees atomic operation. See `new`.
 
-        self.state.advance_position(4 + len as u64);
+        // See if you are past the end of the file
+        if self.state.is_past_end() {
+            // If so, create a new file:
+            // Preserves the already allocaed buffer:
+            *self.file.get_mut() = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(segment_filename(&self.base, self.state.advance_segment()))?;
+        }
+
+        Ok(())
+    }
+
+    /// Sends some data into the queue. All data is sent atomically.
+    pub fn send_batch<I>(&mut self, it: I) -> io::Result<()> 
+    where
+        I: IntoIterator,
+        I::Item: AsRef<[u8]>
+    {
+        // Drain iterator into the buffer.
+        for item in it {
+            self.write(item.as_ref())?;
+        }
+        
+        self.file.flush()?; // guarantees atomic operation. See `new`.
 
         // See if you are past the end of the file
         if self.state.is_past_end() {
@@ -221,6 +297,7 @@ impl Receiver {
         Ok(())
     }
 
+    /// Reads one element from the queue, inevitably advancing the file reader.
     async fn read_one(&mut self) -> io::Result<Vec<u8>> {
         // Read the header to get the length:
         let mut header = [0; 4];
