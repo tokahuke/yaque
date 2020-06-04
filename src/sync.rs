@@ -2,7 +2,7 @@ use notify::event::{Event, EventKind, ModifyKind};
 use notify::{RecommendedWatcher, Watcher};
 use std::fs::*;
 use std::future::Future;
-use std::io::{self, Read};
+use std::io::{self, Read, Seek};
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -128,6 +128,10 @@ impl TailFollower {
         .await?;
 
         Ok(TailFollower::new(path, file))
+    }
+
+    pub fn seek(&mut self, position: u64) -> io::Result<()> {
+        self.file.seek(io::SeekFrom::Start(position)).map(|_| ())
     }
 
     /// Tries to fill the supplied buffer assynchronously. Be carefull, since

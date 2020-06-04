@@ -1,5 +1,4 @@
 //! Todo:
-//!     * Sender.
 
 mod state;
 mod sync;
@@ -8,7 +7,6 @@ use std::fs::*;
 use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use state::{FileGuard, QueueState};
 use sync::TailFollower;
@@ -30,16 +28,11 @@ fn send_lock_filename<P: AsRef<Path>>(base: P) -> PathBuf {
     base.as_ref().join("send.lock")
 }
 
-/// TODO get rid of this.
-struct Inner<T> {
-    file: T,
-    state: QueueState,
-}
-
 /// The sender part of the queue.
 pub struct Sender<Ps: Persist> {
     _file_guard: FileGuard,
-    file: Arc<Mutex<Inner<io::BufWriter<File>>>>,
+    file: io::BufWriter<File>,
+    state: QueueState,
     base: PathBuf,
     persist: Ps,
 }
@@ -47,11 +40,18 @@ pub struct Sender<Ps: Persist> {
 impl<Ps: Persist> Sender<Ps> {
     /// Opens a queue for sending.
     pub fn open<P: AsRef<Path>>(base: P, mut persist: Ps) -> io::Result<Sender<Ps>> {
-        let file_guard = FileGuard::try_lock(send_lock_filename(base.as_ref()))?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "foo"))?;
+        let file_guard =
+            FileGuard::try_lock(send_lock_filename(base.as_ref()))?.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "queue `{}` sender side already in use",
+                        base.as_ref().to_string_lossy()
+                    ),
+                )
+            })?;
 
         let state = persist.open_send(base.as_ref())?;
-        dbg!(&state);
 
         // See the docs on OpenOptions::append for why the BufWriter here.
         let file = io::BufWriter::new(
@@ -63,37 +63,36 @@ impl<Ps: Persist> Sender<Ps> {
 
         Ok(Sender {
             _file_guard: file_guard,
-            file: Arc::new(Mutex::new(Inner { file, state })),
+            file,
+            state,
             base: PathBuf::from(base.as_ref()),
             persist,
         })
     }
 
     /// Sends some data into the queue. One send is always atomic.
-    pub fn send(&self, data: &[u8]) -> io::Result<()> {
+    pub fn send(&mut self, data: &[u8]) -> io::Result<()> {
         // Get length of the data and write the header:
         let len = data.len();
         assert!(len < std::u32::MAX as usize);
         let header = (len as u32).to_be_bytes();
 
-        // Acquire lock and write:
-        let mut lock = self.file.lock().expect("poisoned");
+        // Write stuff to the file:
+        self.file.write_all(&header)?;
+        self.file.write_all(data)?;
+        self.file.flush()?; // guarantees atomic operation. See `new`.
+
+        self.state.advance_position(4 + len as u64);
 
         // See if you are past the end of the file
-        if lock.state.is_past_end() {
+        if self.state.is_past_end() {
             // If so, create a new file:
             // Preserves the already allocaed buffer:
-            *lock.file.get_mut() = OpenOptions::new()
+            *self.file.get_mut() = OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(segment_filename(&self.base, lock.state.advance_segment()))?;
+                .open(segment_filename(&self.base, self.state.advance_segment()))?;
         }
-
-        lock.file.write_all(&header)?;
-        lock.file.write_all(data)?;
-        lock.file.flush()?; // guarantees atomic operation. See `new`.
-
-        lock.state.advance_position(4 + len as u64);
 
         Ok(())
     }
@@ -101,24 +100,26 @@ impl<Ps: Persist> Sender<Ps> {
 
 impl<Ps: Persist> Drop for Sender<Ps> {
     fn drop(&mut self) {
-        println!("saving sender {:?}", self.file.lock().unwrap().state);
-        self.persist
-            .save(&self.file.lock().expect("poisoned").state);
+        if let Err(err) = self.persist.save(&self.state) {
+            log::error!("could not release sender lock: {}", err);
+        }
     }
 }
 
 /// The receiver part of the queue.
 pub struct Receiver<Ps: Persist> {
     _file_guard: FileGuard,
-    tail_follower: Inner<TailFollower>,
+    tail_follower: TailFollower,
+    state: QueueState,
     base: PathBuf,
     persist: Ps,
 }
 
 impl<Ps: Persist> Drop for Receiver<Ps> {
     fn drop(&mut self) {
-        println!("saving recv {:?}", self.tail_follower.state);
-        self.persist.save(&self.tail_follower.state);
+        if let Err(err) = self.persist.save(&self.state) {
+            log::error!("could not release receiver lock: {}", err);
+        }
     }
 }
 
@@ -126,62 +127,123 @@ impl<Ps: Persist> Receiver<Ps> {
     /// Opens a queue for reading. The access will be exclusive, based on the
     /// existence of the temporary file `recv.lock` inside the queue folder.
     pub async fn open<P: AsRef<Path>>(base: P, mut persist: Ps) -> io::Result<Receiver<Ps>> {
-        let file_guard = FileGuard::try_lock(recv_lock_filename(base.as_ref()))?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "foo"))?;
+        let file_guard =
+            FileGuard::try_lock(recv_lock_filename(base.as_ref()))?.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "queue `{}` receiver side already in use",
+                        base.as_ref().to_string_lossy()
+                    ),
+                )
+            })?;
 
         let state = persist.open_recv(base.as_ref())?;
-        let file = TailFollower::open(segment_filename(base.as_ref(), state.segment)).await?;
+        let mut tail_follower =
+            TailFollower::open(segment_filename(base.as_ref(), state.segment)).await?;
+        tail_follower.seek(state.position)?;
 
         Ok(Receiver {
             _file_guard: file_guard,
-            tail_follower: Inner { file, state },
+            tail_follower,
+            state,
             base: PathBuf::from(base.as_ref()),
             persist,
         })
     }
 
-    /// Tries to retrieve an element from the queue. The returned value is a
-    /// guard that will only commit state changes to the queue when dropped.
-    pub async fn recv(&mut self) -> io::Result<RecvGuard<'_, Ps, Vec<u8>>> {
+    /// Maybe advance the segment of this receiver.
+    async fn maybe_advance(&mut self) -> io::Result<()> {
+        // See if you are past the end of the file:
+        if self.state.is_past_end() {
+            // Advance segment and checkpoint!
+            self.state.advance_segment();
+            if let Err(err) = self.persist.save(&self.state) {
+                self.state.retreat_segment();
+                return Err(err);
+            }
+
+            // Start listening to new segments:
+            self.tail_follower =
+                TailFollower::open(segment_filename(&self.base, self.state.segment)).await?;
+
+            // Remove old file:
+            remove_file(segment_filename(&self.base, self.state.segment - 1))?;
+        }
+
+        Ok(())
+    }
+
+    async fn read_one(&mut self) -> io::Result<Vec<u8>> {
         // Read the header to get the length:
         let mut header = [0; 4];
-        self.tail_follower.file.read_exact(&mut header).await?;
+        self.tail_follower.read_exact(&mut header).await?;
         let len = u32::from_be_bytes(header) as usize;
-
-        // See if you are past the end if the file:
-        if self.tail_follower.state.is_past_end() {
-            // Advance segment and checkpoint!
-            self.tail_follower.state.advance_segment();
-            self.persist
-                .save(&self.tail_follower.state)
-                .map_err(|err| {
-                    self.tail_follower.state.retreat_segment();
-                    err
-                })?; // checkpoint!
-
-            self.tail_follower.file = TailFollower::open(segment_filename(
-                &self.base,
-                self.tail_follower.state.segment,
-            ))
-            .await?;
-
-            remove_file(segment_filename(
-                &self.base,
-                self.tail_follower.state.segment - 1,
-            ))?;
-        }
 
         // With the length, read the data:
         let mut data = (0..len).map(|_| 0).collect::<Vec<_>>();
         self.tail_follower
-            .file
             .read_exact(&mut data)
             .await
             .expect("poisoned queue");
 
+        Ok(data)
+    }
+
+    /// Tries to retrieve an element from the queue. The returned value is a
+    /// guard that will only commit state changes to the queue when dropped.
+    pub async fn recv(&mut self) -> io::Result<RecvGuard<'_, Ps, Vec<u8>>> {
+        self.maybe_advance().await?;
+        let data = self.read_one().await?;
+
         Ok(RecvGuard {
             receiver: self,
-            len,
+            len: 4 + data.len(),
+            item: Some(data),
+        })
+    }
+
+    /// Tries to a number of elements from the queue. The returned value is a
+    /// guard that will only commit state changes to the queue when dropped.
+    pub async fn recv_batch(&mut self, n: usize) -> io::Result<RecvGuard<'_, Ps, Vec<Vec<u8>>>> {
+        let mut data = vec![];
+
+        for _ in 0..n {
+            self.maybe_advance().await?;
+            data.push(self.read_one().await?);
+        }
+
+        Ok(RecvGuard {
+            receiver: self,
+            len: data.iter().map(|item| 4 + item.len()).sum(),
+            item: Some(data),
+        })
+    }
+
+    /// Tries to a number of elements from the queue. The returned value is a
+    /// guard that will only commit state changes to the queue when dropped.
+    pub async fn recv_while<P: FnMut(&[u8]) -> bool>(
+        &mut self,
+        mut predicate: P,
+    ) -> io::Result<RecvGuard<'_, Ps, Vec<Vec<u8>>>> {
+        self.maybe_advance().await?;
+        let mut data = vec![];
+
+        // Poor man's do-while
+        loop {
+            self.maybe_advance().await?;
+            let item = self.read_one().await?;
+
+            if predicate(&item) {
+                data.push(item);
+            } else {
+                break;
+            }
+        }
+
+        Ok(RecvGuard {
+            receiver: self,
+            len: data.iter().map(|item| 4 + item.len()).sum(),
             item: Some(data),
         })
     }
@@ -203,10 +265,7 @@ pub struct RecvGuard<'a, Ps: Persist, T> {
 impl<'a, Ps: Persist, T> Drop for RecvGuard<'a, Ps, T> {
     fn drop(&mut self) {
         if !std::thread::panicking() {
-            self.receiver
-                .tail_follower
-                .state
-                .advance_position(4 + self.len as u64);
+            self.receiver.state.advance_position(self.len as u64);
         }
     }
 }
@@ -237,6 +296,7 @@ mod tests {
     use super::*;
     use rand::{Rng, SeedableRng};
     use rand_xorshift::XorShiftRng;
+    use std::sync::{Arc, Mutex};
     use std::io::Read;
 
     fn data_lots_of_data() -> impl Iterator<Item = Vec<u8>> {
@@ -250,7 +310,7 @@ mod tests {
 
     #[test]
     fn enqueue() {
-        let sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
+        let mut sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
         for data in data_lots_of_data().take(100_000) {
             sender.send(&data).unwrap();
         }
@@ -261,7 +321,7 @@ mod tests {
     fn enqueue_then_dequeue() {
         // Enqueue:
         let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
-        let sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
+        let mut sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
         for data in &dataset {
             sender.send(data).unwrap();
         }
@@ -287,7 +347,7 @@ mod tests {
     fn enqueue_and_dequeue() {
         // Enqueue:
         let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
-        let sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
+        let mut sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
 
         let mut i = 0;
         futures::executor::block_on(async {
@@ -308,13 +368,13 @@ mod tests {
     #[test]
     fn enqueue_dequeue_parallel() {
         // Generate data:
-        let dataset = data_lots_of_data().take(1_000_000).collect::<Vec<_>>();
+        let dataset = data_lots_of_data().take(10_000_000).collect::<Vec<_>>();
         let arc_sender = Arc::new(dataset);
         let arc_receiver = arc_sender.clone();
 
         // Enqueue:
         let enqueue = std::thread::spawn(move || {
-            let sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
+            let mut sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
             for data in &*arc_sender {
                 sender.send(data).unwrap();
             }
