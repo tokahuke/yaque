@@ -130,8 +130,8 @@ impl TailFollower {
         Ok(TailFollower::new(path, file))
     }
 
-    pub fn seek(&mut self, position: u64) -> io::Result<()> {
-        self.file.seek(io::SeekFrom::Start(position)).map(|_| ())
+    pub fn seek(&mut self, seek: io::SeekFrom) -> io::Result<()> {
+        self.file.seek(seek).map(|_| ())
     }
 
     /// Tries to fill the supplied buffer assynchronously. Be carefull, since

@@ -1,4 +1,33 @@
-//! Todo:
+//! # Yaque: Yet Another QUEue
+//!
+//! Yaque is yet another disk-backed persistent queue for Rust. It implements
+//! an SPSC channel using you OS' filesystem. Its main advantages over a simple
+//! `VecDeque<T>` are that
+//! * You are not constrained by your RAM size, just by your disk size. This
+//! means you can store gigabytes of data without getting OOM killed.
+//! * Your data is safe even if you program panics. All the queue state is
+//! written to the disk when the queue is dropped.
+//! * Your data can *persist*, that is, can exisit thrhough multiple executions
+//! of your program. Think of it as a very rudimentary kind of database.
+//! * You can pass data between two processes.
+//!
+//! Yaque is _assynchronous_ and built directly on top of `mio` and `notify`.
+//! It is therefore completely agnostic to the runtime you are using for you
+//! application. It will work smoothly with `tokio`, with `async-std` or any
+//! other executor of your choice.
+//!
+//! Yaque is also agnostic to the persistence method _of the queue state_. Even
+//! though data will be written to filesystem, the state of the queue, that is,
+//! the positions of the reader and of the sender, may be saved elsewhere. Examples
+//! include a database, S3 or any other external persistence service. For your
+//! conveinence, a local `FilePersistence` is provided that will record the
+//! queue state to the queue folder itself.  
+//!
+//! ## To do's:
+//!
+//! * Clear queue.
+//! * Channel convenience.
+//! * Send batch.
 
 mod state;
 mod sync;
@@ -23,9 +52,35 @@ fn recv_lock_filename<P: AsRef<Path>>(base: P) -> PathBuf {
     base.as_ref().join("recv.lock")
 }
 
+/// Tries to acquire the receiver lock for a queue.
+fn acquire_recv_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
+    FileGuard::try_lock(recv_lock_filename(base.as_ref()))?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!(
+                "queue `{}` receiver side already in use",
+                base.as_ref().to_string_lossy()
+            ),
+        )
+    })
+}
+
 /// The name of the sender lock in the queue folder.
 fn send_lock_filename<P: AsRef<Path>>(base: P) -> PathBuf {
     base.as_ref().join("send.lock")
+}
+
+/// Tries to acquire the sender lock for a queue.
+fn acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
+    FileGuard::try_lock(send_lock_filename(base.as_ref()))?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!(
+                "queue `{}` sender side already in use",
+                base.as_ref().to_string_lossy()
+            ),
+        )
+    })
 }
 
 /// The sender part of the queue.
@@ -40,17 +95,11 @@ pub struct Sender<Ps: Persist> {
 impl<Ps: Persist> Sender<Ps> {
     /// Opens a queue for sending.
     pub fn open<P: AsRef<Path>>(base: P, mut persist: Ps) -> io::Result<Sender<Ps>> {
-        let file_guard =
-            FileGuard::try_lock(send_lock_filename(base.as_ref()))?.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "queue `{}` sender side already in use",
-                        base.as_ref().to_string_lossy()
-                    ),
-                )
-            })?;
+        // Guarantee that the queue exists:
+        create_dir_all(base.as_ref())?;
 
+        // Acquire lock and state:
+        let file_guard = acquire_send_lock(base.as_ref())?;
         let state = persist.open_send(base.as_ref())?;
 
         // See the docs on OpenOptions::append for why the BufWriter here.
@@ -127,21 +176,17 @@ impl<Ps: Persist> Receiver<Ps> {
     /// Opens a queue for reading. The access will be exclusive, based on the
     /// existence of the temporary file `recv.lock` inside the queue folder.
     pub async fn open<P: AsRef<Path>>(base: P, mut persist: Ps) -> io::Result<Receiver<Ps>> {
-        let file_guard =
-            FileGuard::try_lock(recv_lock_filename(base.as_ref()))?.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "queue `{}` receiver side already in use",
-                        base.as_ref().to_string_lossy()
-                    ),
-                )
-            })?;
+        // Guarantee that the queue exists:
+        create_dir_all(base.as_ref())?;
 
+        // Acquire guarde and state:
+        let file_guard = acquire_recv_lock(base.as_ref())?;
         let state = persist.open_recv(base.as_ref())?;
+
+        // Put the needle on the groove (oh! the 70's):
         let mut tail_follower =
             TailFollower::open(segment_filename(base.as_ref(), state.segment)).await?;
-        tail_follower.seek(state.position)?;
+        tail_follower.seek(io::SeekFrom::Start(state.position))?;
 
         Ok(Receiver {
             _file_guard: file_guard,
@@ -289,6 +334,43 @@ impl<'a, Ps: Persist, T> RecvGuard<'a, Ps, T> {
     pub fn into_inner(mut self) -> T {
         self.item.take().expect("unreachable")
     }
+
+    pub fn commit(self) {
+        drop(self);
+    }
+
+    pub fn rollback(self) -> io::Result<()> {
+        self.receiver
+            .tail_follower
+            .seek(io::SeekFrom::Current(-(self.len as i64)))
+    }
+}
+
+/// Convenience function for opening the queue for both sending and receiving.
+pub async fn channel<P, Ps>(
+    base: P,
+    send_persist: Ps,
+    recv_persist: Ps,
+) -> io::Result<(Sender<Ps>, Receiver<Ps>)>
+where
+    P: AsRef<Path>,
+    Ps: Persist,
+{
+    Ok((
+        Sender::open(base.as_ref(), send_persist)?,
+        Receiver::open(base.as_ref(), recv_persist).await?,
+    ))
+}
+
+/// Deletes a queue at the given path. This function will fail if the queue is
+/// in use either for sending or receiving.
+pub fn clear<P: AsRef<Path>>(base: P) -> io::Result<()> {
+    let _send_lock = acquire_send_lock(base.as_ref())?;
+    let _recv_lock = acquire_recv_lock(base.as_ref())?;
+
+    remove_dir(base.as_ref())?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -296,8 +378,8 @@ mod tests {
     use super::*;
     use rand::{Rng, SeedableRng};
     use rand_xorshift::XorShiftRng;
-    use std::sync::{Arc, Mutex};
     use std::io::Read;
+    use std::sync::{Arc, Mutex};
 
     fn data_lots_of_data() -> impl Iterator<Item = Vec<u8>> {
         let mut rng = XorShiftRng::from_rng(rand::thread_rng()).expect("can init");
