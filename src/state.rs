@@ -75,24 +75,20 @@ impl QueueState {
     }
 }
 
-/// Implements persistence for the state of the queue.
-pub trait Persist {
-    /// Returns the queue state for the given queue path. This method will
-    /// always be invoked *before* and calls to `save` are made.
-    fn open_send<P: AsRef<Path>>(&mut self, base: P) -> io::Result<QueueState>;
-
-    /// Returns the queue state for the given queue path. This method will
-    /// always be invoked *before* and calls to `save` are made.
-    fn open_recv<P: AsRef<Path>>(&mut self, base: P) -> io::Result<QueueState>;
-
-    /// Saves the queue state.
-    fn save(&mut self, queue_state: &QueueState) -> io::Result<()>;
-}
-
 /// An implmementation of persistence using the filesystem itself.
 #[derive(Default)]
 pub struct FilePersistence {
     path: Option<PathBuf>,
+}
+
+/// The name of the file from the sender side inside the queue folder.
+fn send_persistence_filename<P: AsRef<Path>>(base: P) -> PathBuf {
+    base.as_ref().join("send-metadata")
+}
+
+/// The name of the file inside the queue folder.
+fn recv_persistence_filename<P: AsRef<Path>>(base: P) -> PathBuf {
+    base.as_ref().join("recv-metadata")
 }
 
 impl FilePersistence {
@@ -123,32 +119,20 @@ impl FilePersistence {
             Err(err) => Err(err),
         }
     }
-}
 
-/// The name of the file from the sender side inside the queue folder.
-fn send_persistence_filename<P: AsRef<Path>>(base: P) -> PathBuf {
-    base.as_ref().join("send-metadata")
-}
-
-/// The name of the file inside the queue folder.
-fn recv_persistence_filename<P: AsRef<Path>>(base: P) -> PathBuf {
-    base.as_ref().join("recv-metadata")
-}
-
-impl Persist for FilePersistence {
     /// Returns the queue state for the given queue path.
-    fn open_send<P: AsRef<Path>>(&mut self, base: P) -> io::Result<QueueState> {
+    pub fn open_send<P: AsRef<Path>>(&mut self, base: P) -> io::Result<QueueState> {
         self.open(send_persistence_filename(base))
     }
 
     /// Returns the queue state for the given queue path. This method will
     /// always be invoked *before* and calls to `save` are made.
-    fn open_recv<P: AsRef<Path>>(&mut self, base: P) -> io::Result<QueueState> {
+    pub fn open_recv<P: AsRef<Path>>(&mut self, base: P) -> io::Result<QueueState> {
         self.open(recv_persistence_filename(base))
     }
 
     /// Saves the queue state.
-    fn save(&mut self, queue_state: &QueueState) -> io::Result<()> {
+    pub fn save(&mut self, queue_state: &QueueState) -> io::Result<()> {
         let mut file = BufWriter::new(File::create(
             self.path
                 .as_ref()

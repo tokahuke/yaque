@@ -1,13 +1,13 @@
 //! # Yaque: Yet Another QUEue
 //!
-//! Yaque is yet another disk-backed persistent queue for Rust. It implements
+//! Yaque is yet another disk-backed persistenceent queue for Rust. It implements
 //! an SPSC channel using you OS' filesystem. Its main advantages over a simple
 //! `VecDeque<T>` are that
 //! * You are not constrained by your RAM size, just by your disk size. This
 //! means you can store gigabytes of data without getting OOM killed.
 //! * Your data is safe even if you program panics. All the queue state is
 //! written to the disk when the queue is dropped.
-//! * Your data can *persist*, that is, can exisit thrhough multiple executions
+//! * Your data can *persistence*, that is, can exisit thrhough multiple executions
 //! of your program. Think of it as a very rudimentary kind of database.
 //! * You can pass data between two processes.
 //!
@@ -16,10 +16,10 @@
 //! application. It will work smoothly with `tokio`, with `async-std` or any
 //! other executor of your choice.
 //!
-//! Yaque is also agnostic to the persistence method _of the queue state_. Even
+//! Yaque is also agnostic to the persistenceence method _of the queue state_. Even
 //! though data will be written to filesystem, the state of the queue, that is,
 //! the positions of the reader and of the sender, may be saved elsewhere. Examples
-//! include a database, S3 or any other external persistence service. For your
+//! include a database, S3 or any other external persistenceence service. For your
 //! conveinence, a local `FilePersistence` is provided that will record the
 //! queue state to the queue folder itself.  
 //!
@@ -40,7 +40,7 @@ use std::path::{Path, PathBuf};
 use state::{FileGuard, QueueState};
 use sync::TailFollower;
 
-pub use state::{FilePersistence, Persist};
+pub use state::FilePersistence;
 
 /// The name of segment file in the queue folder.
 fn segment_filename<P: AsRef<Path>>(base: P, segment: u64) -> PathBuf {
@@ -84,23 +84,24 @@ fn acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
 }
 
 /// The sender part of the queue.
-pub struct Sender<Ps: Persist> {
+pub struct Sender {
     _file_guard: FileGuard,
     file: io::BufWriter<File>,
     state: QueueState,
     base: PathBuf,
-    persist: Ps,
+    persistence: FilePersistence,
 }
 
-impl<Ps: Persist> Sender<Ps> {
+impl Sender {
     /// Opens a queue for sending.
-    pub fn open<P: AsRef<Path>>(base: P, mut persist: Ps) -> io::Result<Sender<Ps>> {
+    pub fn open<P: AsRef<Path>>(base: P) -> io::Result<Sender> {
         // Guarantee that the queue exists:
         create_dir_all(base.as_ref())?;
 
         // Acquire lock and state:
         let file_guard = acquire_send_lock(base.as_ref())?;
-        let state = persist.open_send(base.as_ref())?;
+        let mut persistence = FilePersistence::new();
+        let state = persistence.open_send(base.as_ref())?;
 
         // See the docs on OpenOptions::append for why the BufWriter here.
         let file = io::BufWriter::new(
@@ -115,7 +116,7 @@ impl<Ps: Persist> Sender<Ps> {
             file,
             state,
             base: PathBuf::from(base.as_ref()),
-            persist,
+            persistence,
         })
     }
 
@@ -147,41 +148,42 @@ impl<Ps: Persist> Sender<Ps> {
     }
 }
 
-impl<Ps: Persist> Drop for Sender<Ps> {
+impl Drop for Sender {
     fn drop(&mut self) {
-        if let Err(err) = self.persist.save(&self.state) {
+        if let Err(err) = self.persistence.save(&self.state) {
             log::error!("could not release sender lock: {}", err);
         }
     }
 }
 
 /// The receiver part of the queue.
-pub struct Receiver<Ps: Persist> {
+pub struct Receiver {
     _file_guard: FileGuard,
     tail_follower: TailFollower,
     state: QueueState,
     base: PathBuf,
-    persist: Ps,
+    persistence: FilePersistence,
 }
 
-impl<Ps: Persist> Drop for Receiver<Ps> {
+impl Drop for Receiver {
     fn drop(&mut self) {
-        if let Err(err) = self.persist.save(&self.state) {
+        if let Err(err) = self.persistence.save(&self.state) {
             log::error!("could not release receiver lock: {}", err);
         }
     }
 }
 
-impl<Ps: Persist> Receiver<Ps> {
+impl Receiver {
     /// Opens a queue for reading. The access will be exclusive, based on the
     /// existence of the temporary file `recv.lock` inside the queue folder.
-    pub async fn open<P: AsRef<Path>>(base: P, mut persist: Ps) -> io::Result<Receiver<Ps>> {
+    pub async fn open<P: AsRef<Path>>(base: P) -> io::Result<Receiver> {
         // Guarantee that the queue exists:
         create_dir_all(base.as_ref())?;
 
         // Acquire guarde and state:
         let file_guard = acquire_recv_lock(base.as_ref())?;
-        let state = persist.open_recv(base.as_ref())?;
+        let mut persistence = FilePersistence::new();
+        let state = persistence.open_recv(base.as_ref())?;
 
         // Put the needle on the groove (oh! the 70's):
         let mut tail_follower =
@@ -193,7 +195,7 @@ impl<Ps: Persist> Receiver<Ps> {
             tail_follower,
             state,
             base: PathBuf::from(base.as_ref()),
-            persist,
+            persistence,
         })
     }
 
@@ -203,7 +205,7 @@ impl<Ps: Persist> Receiver<Ps> {
         if self.state.is_past_end() {
             // Advance segment and checkpoint!
             self.state.advance_segment();
-            if let Err(err) = self.persist.save(&self.state) {
+            if let Err(err) = self.persistence.save(&self.state) {
                 self.state.retreat_segment();
                 return Err(err);
             }
@@ -237,7 +239,7 @@ impl<Ps: Persist> Receiver<Ps> {
 
     /// Tries to retrieve an element from the queue. The returned value is a
     /// guard that will only commit state changes to the queue when dropped.
-    pub async fn recv(&mut self) -> io::Result<RecvGuard<'_, Ps, Vec<u8>>> {
+    pub async fn recv(&mut self) -> io::Result<RecvGuard<'_, Vec<u8>>> {
         self.maybe_advance().await?;
         let data = self.read_one().await?;
 
@@ -250,7 +252,7 @@ impl<Ps: Persist> Receiver<Ps> {
 
     /// Tries to a number of elements from the queue. The returned value is a
     /// guard that will only commit state changes to the queue when dropped.
-    pub async fn recv_batch(&mut self, n: usize) -> io::Result<RecvGuard<'_, Ps, Vec<Vec<u8>>>> {
+    pub async fn recv_batch(&mut self, n: usize) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>> {
         let mut data = vec![];
 
         for _ in 0..n {
@@ -270,7 +272,7 @@ impl<Ps: Persist> Receiver<Ps> {
     pub async fn recv_while<P: FnMut(&[u8]) -> bool>(
         &mut self,
         mut predicate: P,
-    ) -> io::Result<RecvGuard<'_, Ps, Vec<Vec<u8>>>> {
+    ) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>> {
         self.maybe_advance().await?;
         let mut data = vec![];
 
@@ -301,13 +303,13 @@ impl<Ps: Persist> Receiver<Ps> {
 ///
 /// This struct implements `Deref` and `DerefMut`. If you realy, realy want
 /// ownership, there is `RecvGuard::into_inner`, but be careful.
-pub struct RecvGuard<'a, Ps: Persist, T> {
-    receiver: &'a mut Receiver<Ps>,
+pub struct RecvGuard<'a, T> {
+    receiver: &'a mut Receiver,
     len: usize,
     item: Option<T>,
 }
 
-impl<'a, Ps: Persist, T> Drop for RecvGuard<'a, Ps, T> {
+impl<'a, T> Drop for RecvGuard<'a, T> {
     fn drop(&mut self) {
         if !std::thread::panicking() {
             self.receiver.state.advance_position(self.len as u64);
@@ -315,20 +317,20 @@ impl<'a, Ps: Persist, T> Drop for RecvGuard<'a, Ps, T> {
     }
 }
 
-impl<'a, Ps: Persist, T> Deref for RecvGuard<'a, Ps, T> {
+impl<'a, T> Deref for RecvGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
         self.item.as_ref().expect("unreachable")
     }
 }
 
-impl<'a, Ps: Persist, T> DerefMut for RecvGuard<'a, Ps, T> {
+impl<'a, T> DerefMut for RecvGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         self.item.as_mut().expect("unreachable")
     }
 }
 
-impl<'a, Ps: Persist, T> RecvGuard<'a, Ps, T> {
+impl<'a, T> RecvGuard<'a, T> {
     /// Commits the transaction and returns the underlying value. If you
     /// accedentaly lose this value from now on, it's your own fault!
     pub fn into_inner(mut self) -> T {
@@ -347,18 +349,10 @@ impl<'a, Ps: Persist, T> RecvGuard<'a, Ps, T> {
 }
 
 /// Convenience function for opening the queue for both sending and receiving.
-pub async fn channel<P, Ps>(
-    base: P,
-    send_persist: Ps,
-    recv_persist: Ps,
-) -> io::Result<(Sender<Ps>, Receiver<Ps>)>
-where
-    P: AsRef<Path>,
-    Ps: Persist,
-{
+pub async fn channel<P: AsRef<Path>>(base: P) -> io::Result<(Sender, Receiver)> {
     Ok((
-        Sender::open(base.as_ref(), send_persist)?,
-        Receiver::open(base.as_ref(), recv_persist).await?,
+        Sender::open(base.as_ref())?,
+        Receiver::open(base.as_ref()).await?,
     ))
 }
 
@@ -392,27 +386,25 @@ mod tests {
 
     #[test]
     fn enqueue() {
-        let mut sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
+        let mut sender = Sender::open("data/a-queue").unwrap();
         for data in data_lots_of_data().take(100_000) {
             sender.send(&data).unwrap();
         }
     }
 
-    /// Test enqueuing everything and then dequeueing everything, with no persistence.
+    /// Test enqueuing everything and then dequeueing everything, with no persistenceence.
     #[test]
     fn enqueue_then_dequeue() {
         // Enqueue:
         let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
-        let mut sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
+        let mut sender = Sender::open("data/a-queue").unwrap();
         for data in &dataset {
             sender.send(data).unwrap();
         }
 
         // Dequeue:
         futures::executor::block_on(async {
-            let mut receiver = Receiver::open("data/a-queue", FilePersistence::new())
-                .await
-                .unwrap();
+            let mut receiver = Receiver::open("data/a-queue").await.unwrap();
             let dataset_iter = dataset.iter();
             let mut i = 0u64;
 
@@ -424,18 +416,16 @@ mod tests {
         });
     }
 
-    /// Test enqueuing and dequeueing, round robin, with no persistence.
+    /// Test enqueuing and dequeueing, round robin, with no persistenceence.
     #[test]
     fn enqueue_and_dequeue() {
         // Enqueue:
         let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
-        let mut sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
+        let mut sender = Sender::open("data/a-queue").unwrap();
 
         let mut i = 0;
         futures::executor::block_on(async {
-            let mut receiver = Receiver::open("data/a-queue", FilePersistence::new())
-                .await
-                .unwrap();
+            let mut receiver = Receiver::open("data/a-queue").await.unwrap();
             for data in &dataset {
                 sender.send(data).unwrap();
                 let received = receiver.recv().await.unwrap();
@@ -446,7 +436,7 @@ mod tests {
         });
     }
 
-    /// Test enqueuing and dequeueing in parallel, with no persistence.
+    /// Test enqueuing and dequeueing in parallel, with no persistenceence.
     #[test]
     fn enqueue_dequeue_parallel() {
         // Generate data:
@@ -456,7 +446,7 @@ mod tests {
 
         // Enqueue:
         let enqueue = std::thread::spawn(move || {
-            let mut sender = Sender::open("data/a-queue", FilePersistence::new()).unwrap();
+            let mut sender = Sender::open("data/a-queue").unwrap();
             for data in &*arc_sender {
                 sender.send(data).unwrap();
             }
@@ -465,9 +455,7 @@ mod tests {
         // Dequeue:
         let dequeue = std::thread::spawn(move || {
             futures::executor::block_on(async {
-                let mut receiver = Receiver::open("data/a-queue", FilePersistence::new())
-                    .await
-                    .unwrap();
+                let mut receiver = Receiver::open("data/a-queue").await.unwrap();
                 let dataset_iter = arc_receiver.iter();
                 let mut i = 0u64;
 
