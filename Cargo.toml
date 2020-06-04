@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 notify = "5.0.0-pre.2"
+log = "^0.4"
 
 [dev-dependencies]
 rand = "0.7.3"
