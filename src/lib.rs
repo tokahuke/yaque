@@ -17,32 +17,44 @@
 //! other executor of your choice.
 //!
 //! ## Sample usage
-//! 
+//!
 //! To create a new queue, just use the [`channel`] function, passing a
 //! directory path on which to mount the queue. If the directiory does not exist
 //! on creation, it (and possibly all its parent directories) will be created.
 //! ```
 //! use yaque::channel;
-//! 
-//! let (mut sender, mut receiver) = channel("data/my-queue").await.unwrap();
+//!
+//! futures::executor::block_on(async {
+//!     let (mut sender, mut receiver) = channel("data/my-queue")
+//!         .await
+//!         .unwrap();
+//! })
 //! ```
-//! You can also use [`Sender::open`] and [`Receiver::open`] to open only one half
-//! of the channel, if you need to.
-//! 
+//! You can also use [`Sender::open`] and [`Receiver::open`] to open only one
+//! half of the channel, if you need to.
+//!
 //! The usage is similar to the MPSC channel in the standard library, except
 //! that the receiving method, [`Receiver::recv`] is assynchronous. Writing to
 //! the queue with the sender is basically lock-free and atomic.
 //! ```
-//! sender.send(b"some data").unwrap();
-//! let data = receiver.recv().await.unwrap();
-//! 
-//! assert_eq!(&*data, b"some data");
+//! use yaque::channel;
+//!
+//! futures::executor::block_on(async {
+//!     let (mut sender, mut receiver) = channel("data/my-queue")
+//!         .await
+//!         .unwrap();
+//!     
+//!     sender.send(b"some data").unwrap();
+//!     let data = receiver.recv().await.unwrap();
+//!
+//!     assert_eq!(&*data, b"some data");
+//! })
 //! ```
 //! The returned value `data` is a kind of guard that implements `Deref` and
 //! `DerefMut` on the undelying type.
-//! 
+//!
 //! ## [`RecvGuard`] and transactional behavior
-//! 
+//!
 //! One important thing to notice is that reads from the queue are
 //! _transactional_. The `Receiver::recv` returns a [`RecvGuard`] that only
 //! commits the dequeing operation, that is, makes it official in the disk,
@@ -52,18 +64,18 @@
 //! operation, it will _try_ to rollback. If the rollback operation is
 //! unsuccessful, the operation will be commited (possibly with data loss),
 //! since to panic while panicking results in the process being aborted, which
-//! is Really Bad. 
-//! 
+//! is Really Bad.
+//!
 //! ## Batches
-//! 
+//!
 //! You can use the `yaque` queue to send and receive batches of data ,
 //! too. The guarantees are the same as with single reads and writes, except
 //! that you may save on OS overhead when you send items, since only one disk
 //! operation is made. See [`Sender::send_batch`], [`Receiver::recv_batch`] and
 //! [`Receiver::recv_while`] for more information on receiver batches.
-//! 
+//!
 //! ## Known issues and next steps
-//! 
+//!
 //! * This is a brand new project. Although I have tested it and it will
 //! certainly not implode your computer, don't trust your life on it yet.
 //! * Wastes too much kernel time when the queue is small enough and the sender
@@ -81,9 +93,9 @@ use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
-use state::{FileGuard, QueueState};
-use sync::TailFollower;
 use state::FilePersistence;
+use state::QueueState;
+use sync::{FileGuard, TailFollower};
 
 /// The name of segment file in the queue folder.
 fn segment_filename<P: AsRef<Path>>(base: P, segment: u64) -> PathBuf {
@@ -126,7 +138,11 @@ fn acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
     })
 }
 
-/// The sender part of the queue.
+/// The value of a header EOF.
+const HEADER_EOF: u32 = std::u32::MAX;
+
+/// The sender part of the queue. This part is lock-free and therefore can be
+/// used outside an asynchronous context.
 pub struct Sender {
     _file_guard: FileGuard,
     file: io::BufWriter<File>,
@@ -136,15 +152,26 @@ pub struct Sender {
 }
 
 impl Sender {
-    /// Opens a queue for sending.
+    /// Opens a queue on a folder indicated by the `base` path for sending. The
+    /// folder will be created if it does not already exist.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an IO error if the queue is already in use for
+    /// sending, which is indicated by a lock file. Also, any other IO error
+    /// encountered while opening will be sent.
     pub fn open<P: AsRef<Path>>(base: P) -> io::Result<Sender> {
         // Guarantee that the queue exists:
         create_dir_all(base.as_ref())?;
+
+        log::trace!("created queue directory");
 
         // Acquire lock and state:
         let file_guard = acquire_send_lock(base.as_ref())?;
         let mut persistence = FilePersistence::new();
         let state = persistence.open_send(base.as_ref())?;
+
+        log::trace!("sender lock acquired. Sender state now is {:?}", state);
 
         // See the docs on OpenOptions::append for why the BufWriter here.
         let file = io::BufWriter::new(
@@ -153,6 +180,8 @@ impl Sender {
                 .append(true)
                 .open(segment_filename(base.as_ref(), state.segment))?,
         );
+
+        log::trace!("last segment opened for appending");
 
         Ok(Sender {
             _file_guard: file_guard,
@@ -164,7 +193,7 @@ impl Sender {
     }
 
     /// Just writes to the internal buffer, but doesn't flush it.
-    fn write(&mut self, data: &[u8]) -> io::Result<()> {
+    fn write(&mut self, data: &[u8]) -> io::Result<u64> {
         // Get length of the data and write the header:
         let len = data.as_ref().len();
         assert!(len < std::u32::MAX as usize);
@@ -173,51 +202,66 @@ impl Sender {
         // Write stuff to the file:
         self.file.write_all(&header)?;
         self.file.write_all(data.as_ref())?;
-        self.state.advance_position(4 + len as u64);
+
+        Ok(4 + len as u64)
+    }
+
+    /// Caps off a segment by writing an EOF header and then moves segment.
+    fn cap_off_and_move(&mut self) -> io::Result<()> {
+        // Write EOF header:
+        self.file.write(&HEADER_EOF.to_be_bytes())?;
+        self.file.flush()?;
+
+        // Preserves the already allocaed buffer:
+        *self.file.get_mut() = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(segment_filename(&self.base, self.state.advance_segment()))?;
 
         Ok(())
     }
 
     /// Sends some data into the queue. One send is always atomic.
+    ///
+    /// # Errors
+    ///
+    /// This function returns any underlying errors encoutered while writing or
+    /// flushing the queue.
     pub fn send<D: AsRef<[u8]>>(&mut self, data: D) -> io::Result<()> {
         // Write to the queue and flush:
-        self.write(data.as_ref())?;
+        let written = self.write(data.as_ref())?;
         self.file.flush()?; // guarantees atomic operation. See `new`.
+        self.state.advance_position(written);
 
         // See if you are past the end of the file
         if self.state.is_past_end() {
             // If so, create a new file:
-            // Preserves the already allocaed buffer:
-            *self.file.get_mut() = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(segment_filename(&self.base, self.state.advance_segment()))?;
+            self.cap_off_and_move()?;
         }
 
         Ok(())
     }
 
-    /// Sends some data into the queue. All data is sent atomically.
-    pub fn send_batch<I>(&mut self, it: I) -> io::Result<()> 
+    /// Sends all the contents of an iterable into the queue. All is buffered
+    /// to be sent atomically, in one flush operation.
+    pub fn send_batch<I>(&mut self, it: I) -> io::Result<()>
     where
         I: IntoIterator,
-        I::Item: AsRef<[u8]>
+        I::Item: AsRef<[u8]>,
     {
+        let mut written = 0;
         // Drain iterator into the buffer.
         for item in it {
-            self.write(item.as_ref())?;
+            written += self.write(item.as_ref())?;
         }
-        
+
         self.file.flush()?; // guarantees atomic operation. See `new`.
+        self.state.advance_position(written);
 
         // See if you are past the end of the file
         if self.state.is_past_end() {
             // If so, create a new file:
-            // Preserves the already allocaed buffer:
-            *self.file.get_mut() = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(segment_filename(&self.base, self.state.advance_segment()))?;
+            self.cap_off_and_move()?;
         }
 
         Ok(())
@@ -232,7 +276,8 @@ impl Drop for Sender {
     }
 }
 
-/// The receiver part of the queue.
+/// The receiver part of the queue. This part is assynchronous and therefore
+/// needs an executor that will the poll the futures to completion.
 pub struct Receiver {
     _file_guard: FileGuard,
     tail_follower: TailFollower,
@@ -252,19 +297,36 @@ impl Drop for Receiver {
 impl Receiver {
     /// Opens a queue for reading. The access will be exclusive, based on the
     /// existence of the temporary file `recv.lock` inside the queue folder.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an IO error if the queue is already in use for
+    /// receiving, which is indicated by a lock file. Also, any other IO error
+    /// encountered while opening will be sent.
+    /// 
+    /// # Panics
+    /// 
+    /// This function will panic if it is not able to set up the notification
+    /// handler to watch for file changes.
     pub async fn open<P: AsRef<Path>>(base: P) -> io::Result<Receiver> {
         // Guarantee that the queue exists:
         create_dir_all(base.as_ref())?;
+
+        log::trace!("created queue directory");
 
         // Acquire guarde and state:
         let file_guard = acquire_recv_lock(base.as_ref())?;
         let mut persistence = FilePersistence::new();
         let state = persistence.open_recv(base.as_ref())?;
 
+        log::trace!("receiver lock acquired. Receiver state now is {:?}", state);
+
         // Put the needle on the groove (oh! the 70's):
         let mut tail_follower =
             TailFollower::open(segment_filename(base.as_ref(), state.segment)).await?;
         tail_follower.seek(io::SeekFrom::Start(state.position))?;
+
+        log::trace!("last segment opened fo reading");
 
         Ok(Receiver {
             _file_guard: file_guard,
@@ -276,23 +338,31 @@ impl Receiver {
     }
 
     /// Maybe advance the segment of this receiver.
-    async fn maybe_advance(&mut self) -> io::Result<()> {
-        // See if you are past the end of the file:
-        if self.state.is_past_end() {
-            // Advance segment and checkpoint!
-            self.state.advance_segment();
-            if let Err(err) = self.persistence.save(&self.state) {
-                self.state.retreat_segment();
-                return Err(err);
-            }
+    async fn advance(&mut self) -> io::Result<()> {
+        log::trace!(
+            "advancing segment from {} to {}",
+            self.state.segment,
+            self.state.segment + 1
+        );
 
-            // Start listening to new segments:
-            self.tail_follower =
-                TailFollower::open(segment_filename(&self.base, self.state.segment)).await?;
-
-            // Remove old file:
-            remove_file(segment_filename(&self.base, self.state.segment - 1))?;
+        // Advance segment and checkpoint!
+        self.state.advance_segment();
+        if let Err(err) = self.persistence.save(&self.state) {
+            log::error!("failed to save receiver: {}", err);
+            self.state.retreat_segment();
+            return Err(err);
         }
+
+        // Start listening to new segments:
+        self.tail_follower =
+            TailFollower::open(segment_filename(&self.base, self.state.segment)).await?;
+
+        log::trace!("acquired new tail follower");
+
+        // Remove old file:
+        remove_file(segment_filename(&self.base, self.state.segment - 1))?;
+
+        log::trace!("removed old segment file");
 
         Ok(())
     }
@@ -302,7 +372,18 @@ impl Receiver {
         // Read the header to get the length:
         let mut header = [0; 4];
         self.tail_follower.read_exact(&mut header).await?;
-        let len = u32::from_be_bytes(header) as usize;
+        let mut len = u32::from_be_bytes(header);
+
+        // If the header is EOF, advance segment:
+        if len == HEADER_EOF {
+            log::trace!("got EOF header. Advancing...");
+            self.advance().await?;
+
+            // Re-read the header:
+            log::trace!("re-reading new header from new file");
+            self.tail_follower.read_exact(&mut header).await?;
+            len = u32::from_be_bytes(header);
+        }
 
         // With the length, read the data:
         let mut data = (0..len).map(|_| 0).collect::<Vec<_>>();
@@ -316,8 +397,13 @@ impl Receiver {
 
     /// Tries to retrieve an element from the queue. The returned value is a
     /// guard that will only commit state changes to the queue when dropped.
+    /// 
+    /// # Panics
+    /// 
+    /// This function will panic if it has to start reading a new segment and
+    /// it is not able to set up the notification handler to watch for file
+    /// changes.
     pub async fn recv(&mut self) -> io::Result<RecvGuard<'_, Vec<u8>>> {
-        self.maybe_advance().await?;
         let data = self.read_one().await?;
 
         Ok(RecvGuard {
@@ -329,11 +415,16 @@ impl Receiver {
 
     /// Tries to a number of elements from the queue. The returned value is a
     /// guard that will only commit state changes to the queue when dropped.
+    /// 
+    /// # Panics
+    /// 
+    /// This function will panic if it has to start reading a new segment and
+    /// it is not able to set up the notification handler to watch for file
+    /// changes.
     pub async fn recv_batch(&mut self, n: usize) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>> {
         let mut data = vec![];
 
         for _ in 0..n {
-            self.maybe_advance().await?;
             data.push(self.read_one().await?);
         }
 
@@ -346,16 +437,20 @@ impl Receiver {
 
     /// Tries to a number of elements from the queue. The returned value is a
     /// guard that will only commit state changes to the queue when dropped.
+    /// 
+    /// # Panics
+    /// 
+    /// This function will panic if it has to start reading a new segment and
+    /// it is not able to set up the notification handler to watch for file
+    /// changes.
     pub async fn recv_while<P: FnMut(&[u8]) -> bool>(
         &mut self,
         mut predicate: P,
     ) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>> {
-        self.maybe_advance().await?;
         let mut data = vec![];
 
         // Poor man's do-while
         loop {
-            self.maybe_advance().await?;
             let item = self.read_one().await?;
 
             if predicate(&item) {
@@ -373,10 +468,11 @@ impl Receiver {
     }
 }
 
-/// A guard that will only log changes on the queue state when dropped. If it
-/// is dropped in a thread that is panicking, no chage will be logged, allowing
-/// for the items to be consumed when a new instance recovers. This allows
-/// transactional use of the queue.
+/// A guard that will only log changes on the queue state when dropped.
+///
+/// If it is dropped in a thread that is panicking, no chage will be logged,
+/// allowing for the items to be consumed when a new instance recovers. This
+/// allows transactional use of the queue.
 ///
 /// This struct implements `Deref` and `DerefMut`. If you realy, realy want
 /// ownership, there is `RecvGuard::into_inner`, but be careful.
@@ -414,10 +510,19 @@ impl<'a, T> RecvGuard<'a, T> {
         self.item.take().expect("unreachable")
     }
 
+    /// Commits the changes to the queue, consuming this `RecvGuard`. This is
+    /// equivalent to `drop`.
     pub fn commit(self) {
         drop(self);
     }
 
+    /// Rolls the reader back to the previous point, negating the changes made
+    /// on the queue.
+    /// 
+    /// # Errors
+    /// 
+    /// If there is some error while moving the reader back, this error will be
+    /// return.
     pub fn rollback(self) -> io::Result<()> {
         self.receiver
             .tail_follower
@@ -436,10 +541,14 @@ pub async fn channel<P: AsRef<Path>>(base: P) -> io::Result<(Sender, Receiver)> 
 /// Deletes a queue at the given path. This function will fail if the queue is
 /// in use either for sending or receiving.
 pub fn clear<P: AsRef<Path>>(base: P) -> io::Result<()> {
-    let _send_lock = acquire_send_lock(base.as_ref())?;
-    let _recv_lock = acquire_recv_lock(base.as_ref())?;
+    let mut send_lock = acquire_send_lock(base.as_ref())?;
+    let mut recv_lock = acquire_recv_lock(base.as_ref())?;
 
-    remove_dir(base.as_ref())?;
+    // Sets the the locks to ignore when their files magically disappear. 
+    send_lock.ignore();
+    recv_lock.ignore();
+
+    remove_dir_all(base.as_ref())?;
 
     Ok(())
 }
@@ -449,8 +558,7 @@ mod tests {
     use super::*;
     use rand::{Rng, SeedableRng};
     use rand_xorshift::XorShiftRng;
-    use std::io::Read;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     fn data_lots_of_data() -> impl Iterator<Item = Vec<u8>> {
         let mut rng = XorShiftRng::from_rng(rand::thread_rng()).expect("can init");
@@ -462,26 +570,38 @@ mod tests {
     }
 
     #[test]
-    fn enqueue() {
-        let mut sender = Sender::open("data/a-queue").unwrap();
+    fn create_and_clear() {
+        let _ = simple_logger::init_with_level(log::Level::Trace);
+        let _ = Sender::open("data/create-and-clear").unwrap();
+        clear("data/create-and-clear").unwrap();
+    }
+
+    #[test]
+    fn test_enqueue() {
+        let _ = simple_logger::init_with_level(log::Level::Trace);
+        let mut sender = Sender::open("data/enqueue").unwrap();
         for data in data_lots_of_data().take(100_000) {
             sender.send(&data).unwrap();
         }
     }
 
-    /// Test enqueuing everything and then dequeueing everything, with no persistenceence.
+    /// Test enqueuing everything and then dequeueing everything, with no persistence.
     #[test]
-    fn enqueue_then_dequeue() {
+    fn test_enqueue_then_dequeue() {
+        let _ = simple_logger::init_with_level(log::Level::Trace);
+
         // Enqueue:
         let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
-        let mut sender = Sender::open("data/a-queue").unwrap();
+        let mut sender = Sender::open("data/enqueue-then-dequeue").unwrap();
         for data in &dataset {
             sender.send(data).unwrap();
         }
 
+        log::trace!("enqueued");
+
         // Dequeue:
         futures::executor::block_on(async {
-            let mut receiver = Receiver::open("data/a-queue").await.unwrap();
+            let mut receiver = Receiver::open("data/enqueue-then-dequeue").await.unwrap();
             let dataset_iter = dataset.iter();
             let mut i = 0u64;
 
@@ -495,14 +615,17 @@ mod tests {
 
     /// Test enqueuing and dequeueing, round robin, with no persistenceence.
     #[test]
-    fn enqueue_and_dequeue() {
+    fn test_enqueue_and_dequeue() {
+        let _ = simple_logger::init_with_level(log::Level::Trace);
+
         // Enqueue:
         let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
-        let mut sender = Sender::open("data/a-queue").unwrap();
+        let mut sender = Sender::open("data/enqueue-and-dequeue").unwrap();
 
-        let mut i = 0;
         futures::executor::block_on(async {
-            let mut receiver = Receiver::open("data/a-queue").await.unwrap();
+            let mut receiver = Receiver::open("data/enqueue-and-dequeue").await.unwrap();
+            let mut i = 0;
+
             for data in &dataset {
                 sender.send(data).unwrap();
                 let received = receiver.recv().await.unwrap();
@@ -515,15 +638,17 @@ mod tests {
 
     /// Test enqueuing and dequeueing in parallel, with no persistenceence.
     #[test]
-    fn enqueue_dequeue_parallel() {
+    fn test_enqueue_dequeue_parallel() {
+        let _ = simple_logger::init_with_level(log::Level::Trace);
+
         // Generate data:
-        let dataset = data_lots_of_data().take(10_000_000).collect::<Vec<_>>();
+        let dataset = data_lots_of_data().take(1_000_000).collect::<Vec<_>>();
         let arc_sender = Arc::new(dataset);
         let arc_receiver = arc_sender.clone();
 
         // Enqueue:
         let enqueue = std::thread::spawn(move || {
-            let mut sender = Sender::open("data/a-queue").unwrap();
+            let mut sender = Sender::open("data/enqueue-dequeue-parallel").unwrap();
             for data in &*arc_sender {
                 sender.send(data).unwrap();
             }
@@ -532,7 +657,9 @@ mod tests {
         // Dequeue:
         let dequeue = std::thread::spawn(move || {
             futures::executor::block_on(async {
-                let mut receiver = Receiver::open("data/a-queue").await.unwrap();
+                let mut receiver = Receiver::open("data/enqueue-dequeue-parallel")
+                    .await
+                    .unwrap();
                 let dataset_iter = arc_receiver.iter();
                 let mut i = 0u64;
 
@@ -546,57 +673,5 @@ mod tests {
 
         enqueue.join().expect("enqueue thread panicked");
         dequeue.join().expect("dequeue thread panicked");
-    }
-
-    #[test]
-    fn notify_test() {
-        fn read(file: &Mutex<File>) {
-            let mut buffer = vec![0; 128];
-            let mut lock = file.lock().unwrap();
-            loop {
-                match lock.read(&mut buffer) {
-                    Ok(0) => return,
-                    Ok(i) => {
-                        print!("{}", String::from_utf8_lossy(&buffer[..i]));
-                        // buffer.clear();
-                    }
-                    Err(err) if err.kind() == io::ErrorKind::Interrupted => {
-                        return;
-                    }
-                    Err(err) => Err(err).unwrap(),
-                }
-            }
-        }
-
-        use notify::event::{Event, EventKind, ModifyKind};
-        use notify::Watcher;
-        let file = Mutex::new(File::open("data/a-queue/foo.txt").unwrap());
-
-        read(&file);
-
-        let mut watcher =
-            notify::immediate_watcher(move |maybe_event: notify::Result<notify::Event>| {
-                match maybe_event.unwrap() {
-                    Event {
-                        kind: EventKind::Modify(ModifyKind::Data(_)),
-                        paths,
-                        ..
-                    } => {
-                        let has_changed = paths
-                            .into_iter()
-                            .any(|path| path.ends_with("data/a-queue/foo.txt"));
-                        if has_changed {
-                            read(&file);
-                        }
-                    }
-                    _ => {}
-                }
-            })
-            .unwrap();
-        watcher
-            .watch("data/a-queue", notify::RecursiveMode::NonRecursive)
-            .unwrap();
-
-        std::thread::sleep(std::time::Duration::from_secs(60));
     }
 }

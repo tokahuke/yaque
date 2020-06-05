@@ -1,10 +1,15 @@
 [package]
 name = "yaque"
 version = "0.1.0"
-authors = ["Pedro Arruda <pedro.arruda@quero.com>"]
+authors = ["Pedro Arruda <pedrobittencourt3@protonmail.ch>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "Yaque is yet another disk-backed persistent queue for Rust"
+license = "Apache-2.0"
+homepage = "https://github.com/tokahuke/yaque"
+repository = "https://github.com/tokahuke/yaque"
+keywords = ["queue", "persistent", "disk", "data-structures"]
+readme = "readme.md"
+exclude = ["data"]
 
 [dependencies]
 notify = "5.0.0-pre.2"
@@ -14,3 +19,4 @@ log = "^0.4"
 rand = "0.7.3"
 rand_xorshift = "0.2.0"
 futures = "0.3.5"
+simple_logger = "1.6.0"

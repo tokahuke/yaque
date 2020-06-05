@@ -1,12 +1,57 @@
+//! Synchronization structures based on the filesystem.
+
 use notify::event::{Event, EventKind, ModifyKind};
 use notify::{RecommendedWatcher, Watcher};
 use std::fs::*;
 use std::future::Future;
 use std::io::{self, Read, Seek};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
+
+/// A lock using the atomicity of `OpenOptions::create_new`. Not exactly a good
+/// lock. You can easly delete it and everything goes down the drain.
+pub struct FileGuard {
+    path: PathBuf,
+    ignore: bool,
+}
+
+impl Drop for FileGuard {
+    fn drop(&mut self) {
+        if let Err(err) = remove_file(&self.path) {
+            if !self.ignore {
+                log::error!("unable to drop file lock: {}", err);
+                return;
+            }
+        }
+
+        log::trace!("file guard on `{:?}` dropped", self.path);
+    }
+}
+
+impl FileGuard {
+    /// Igonres errors on the deletion of the guard.
+    pub(crate) fn ignore(&mut self) {
+        self.ignore = true;
+    }
+
+    /// Tries to lock using a certain path in the disk. If the file exists,
+    /// returns `Ok(None)`.
+    pub fn try_lock<P: AsRef<Path>>(path: P) -> io::Result<Option<FileGuard>> {
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                writeln!(file, "pid={}", std::process::id())?;
+                Ok(Some(FileGuard {
+                    path: path.as_ref().to_path_buf(),
+                    ignore: false,
+                }))
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+}
 
 /// Watches for the creation of a given future file.
 fn file_creation_watcher<P>(path: P, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
@@ -68,7 +113,7 @@ where
                     kind: EventKind::Remove(_),
                     ..
                 } => {
-                    log::info!("file removed");
+                    log::debug!("file being watched was removed");
                 }
                 _ => {}
             }
@@ -201,25 +246,5 @@ impl<'a> Future for ReadExact<'a> {
             Err(err) if err.kind() == io::ErrorKind::Interrupted => Poll::Pending,
             Err(err) => Poll::Ready(Err(err)),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// TODO: make it stop! Make it stop!!
-    #[test]
-    fn tail_follow_test() {
-        futures::executor::block_on(async move {
-            let mut tail_follower = TailFollower::open("data/foo.txt").await.unwrap();
-            let mut buffer = vec![0; 128];
-
-            loop {
-                tail_follower.read_exact(&mut buffer).await.unwrap();
-                print!("{}", String::from_utf8_lossy(&mut buffer));
-                buffer = vec![0; 128];
-            }
-        });
     }
 }

@@ -1,50 +1,26 @@
+//! Structures for managing the state of a queue.
+
 use std::fs::*;
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
-/// A lock using the atomicity of `OpenOptions::create_new`. Not exactly a good
-/// lock. You can easly delete it and everything goes down the drain.
-pub struct FileGuard {
-    path: PathBuf,
-}
-
-impl Drop for FileGuard {
-    fn drop(&mut self) {
-        if let Err(err) = remove_file(&self.path) {
-            log::error!("CRITICAL: unable to drop file lock: {}", err);
-        }
-    }
-}
-
-impl FileGuard {
-    /// Tries to lock using a certain path in the disk. If the file exists,
-    /// returns `Ok(None)`.
-    pub fn try_lock<P: AsRef<Path>>(path: P) -> io::Result<Option<FileGuard>> {
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                writeln!(file, "pid={}", std::process::id())?;
-                Ok(Some(FileGuard {
-                    path: path.as_ref().to_path_buf(),
-                }))
-            }
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(None),
-            Err(err) => Err(err),
-        }
-    }
-}
-
-/// The internal state of one side of the queue.'
+/// The internal state of one side of the queue.
 #[derive(Debug, PartialEq)]
 pub struct QueueState {
+    /// The mininum size of a queue segment. Normally, this will be very near
+    /// the final size of the segment if the elements are small enough.
     pub segment_size: u64,
+    /// The number of the actual segment.
     pub segment: u64,
+    /// The byte position within the segment (the positiona that can be reached
+    /// by using Seek::seek).
     pub position: u64,
 }
 
 impl Default for QueueState {
     fn default() -> QueueState {
         QueueState {
-            segment_size: 1024 * 1024 * 32,
+            segment_size: 1024 * 1024 * 4, // 4MB
             segment: 0,
             position: 0,
         }
