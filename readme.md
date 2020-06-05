@@ -1,5 +1,7 @@
 # Yaque: Yet Another QUEue
 
+<a href="https://docs.rs/yaque"><img src="https://docs.rs/yaque/badge.svg"></a>
+
 Yaque is yet another disk-backed persistent queue for Rust. It implements
 an SPSC channel using your OS' filesystem. Its main advantages over a simple
 `VecDeque<T>` are that
