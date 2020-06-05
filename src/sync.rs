@@ -4,7 +4,7 @@ use notify::event::{Event, EventKind, ModifyKind};
 use notify::{RecommendedWatcher, Watcher};
 use std::fs::*;
 use std::future::Future;
-use std::io::{self, Read, Seek};
+use std::io::{self, Read, Write, Seek};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
