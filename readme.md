@@ -72,3 +72,7 @@ sends many frequent small messages non-atomically.
 * There are probably unknown bugs hidden in some corner case. If you find
 one, please fill an issue in GitHub. Pull requests and contributions are
 also greatly appreciated.
+
+## Licensing
+
+This project is open source and licenced under the Apache 2.0 licence.
