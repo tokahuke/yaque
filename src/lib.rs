@@ -413,8 +413,8 @@ impl Receiver {
         })
     }
 
-    /// Tries to a number of elements from the queue. The returned value is a
-    /// guard that will only commit state changes to the queue when dropped.
+    /// Tries to remove a number of elements from the queue. The returned value
+    /// is a guard that will only commit state changes to the queue when dropped.
     /// 
     /// # Panics
     /// 
