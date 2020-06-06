@@ -53,41 +53,41 @@ impl FileGuard {
     }
 }
 
-/// Watches for the creation of a given future file.
-fn file_creation_watcher<P>(path: P, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
-where
-    P: AsRef<Path>,
-{
-    // Set up watcher:
-    let mut watcher =
-        notify::immediate_watcher(move |maybe_event: notify::Result<notify::Event>| {
-            match maybe_event.expect("received error from watcher") {
-                // When any modificatin in the file happens
-                Event {
-                    kind: EventKind::Create(_),
-                    ..
-                } => {
-                    waker
-                        .lock()
-                        .expect("waker poisoned")
-                        .as_mut()
-                        .map(|waker: &mut Waker| waker.wake_by_ref());
-                }
-                _ => {}
-            }
-        })
-        .expect("could not create watcher");
+// /// Watches for the creation of a given future file.
+// fn file_creation_watcher<P>(path: P, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
+// where
+//     P: AsRef<Path>,
+// {
+//     // Set up watcher:
+//     let mut watcher =
+//         notify::immediate_watcher(move |maybe_event: notify::Result<notify::Event>| {
+//             match maybe_event.expect("received error from watcher") {
+//                 // When any modificatin in the file happens
+//                 Event {
+//                     kind: EventKind::Create(_),
+//                     ..
+//                 } => {
+//                     waker
+//                         .lock()
+//                         .expect("waker poisoned")
+//                         .as_mut()
+//                         .map(|waker: &mut Waker| waker.wake_by_ref());
+//                 }
+//                 _ => {}
+//             }
+//         })
+//         .expect("could not create watcher");
 
-    // Put watcher to run:
-    watcher
-        .watch(
-            path.as_ref().parent().expect("file must have parent"),
-            notify::RecursiveMode::NonRecursive,
-        )
-        .expect("could not start watching file");
+//     // Put watcher to run:
+//     watcher
+//         .watch(
+//             path.as_ref().parent().expect("file must have parent"),
+//             notify::RecursiveMode::NonRecursive,
+//         )
+//         .expect("could not start watching file");
 
-    watcher
-}
+//     watcher
+// }
 
 /// Watches a file for changes in its content.
 fn file_watcher<P>(path: P, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
@@ -161,11 +161,11 @@ impl TailFollower {
     where
         P: 'static + AsRef<Path> + Send + Sync,
     {
-        // Set up creation waker:
-        let waker = Arc::new(Mutex::new(None));
+        // // Set up creation waker:
+        // let waker = Arc::new(Mutex::new(None));
 
-        // Set up creation watcher:
-        let _creation_watcher = file_creation_watcher(&path, waker.clone());
+        // // Set up creation watcher:
+        // let _creation_watcher = file_creation_watcher(&path, waker.clone());
 
         // "Touch" the file and then open it to ensure its existence:
         // Any errors here are OK.
@@ -198,27 +198,27 @@ impl TailFollower {
     }
 }
 
-/// A future to the opening of a file. This future will resolve immediately if
-/// the file exists or await the file creation.
-struct Open<'a, P> {
-    waker: &'a Mutex<Option<Waker>>,
-    path: &'a P,
-}
+// /// A future to the opening of a file. This future will resolve immediately if
+// /// the file exists or await the file creation.
+// struct Open<'a, P> {
+//     waker: &'a Mutex<Option<Waker>>,
+//     path: &'a P,
+// }
 
-impl<'a, P: 'static + AsRef<Path> + Send + Sync> Future for Open<'a, P> {
-    type Output = io::Result<File>;
-    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        // Set the waker in the file watcher:
-        let mut lock = self.waker.lock().expect("waker mutex posoned");
-        *lock = Some(context.waker().clone());
+// impl<'a, P: 'static + AsRef<Path> + Send + Sync> Future for Open<'a, P> {
+//     type Output = io::Result<File>;
+//     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+//         // Set the waker in the file watcher:
+//         let mut lock = self.waker.lock().expect("waker mutex posoned");
+//         *lock = Some(context.waker().clone());
 
-        match File::open(self.path.as_ref()) {
-            Ok(file) => Poll::Ready(Ok(file)),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Poll::Pending,
-            Err(err) => Poll::Ready(Err(err)),
-        }
-    }
-}
+//         match File::open(self.path.as_ref()) {
+//             Ok(file) => Poll::Ready(Ok(file)),
+//             Err(err) if err.kind() == io::ErrorKind::NotFound => Poll::Pending,
+//             Err(err) => Poll::Ready(Err(err)),
+//         }
+//     }
+// }
 
 /// The future returned by `TailFollower::read_exact`.
 pub struct ReadExact<'a> {
