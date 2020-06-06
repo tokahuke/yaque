@@ -25,9 +25,7 @@
 //! use yaque::channel;
 //!
 //! futures::executor::block_on(async {
-//!     let (mut sender, mut receiver) = channel("data/my-queue")
-//!         .await
-//!         .unwrap();
+//!     let (mut sender, mut receiver) = channel("data/my-queue").unwrap();
 //! })
 //! ```
 //! You can also use [`Sender::open`] and [`Receiver::open`] to open only one
@@ -40,9 +38,7 @@
 //! use yaque::channel;
 //!
 //! futures::executor::block_on(async {
-//!     let (mut sender, mut receiver) = channel("data/my-queue")
-//!         .await
-//!         .unwrap();
+//!     let (mut sender, mut receiver) = channel("data/my-queue").unwrap();
 //!     
 //!     sender.send(b"some data").unwrap();
 //!     let data = receiver.recv().await.unwrap();
@@ -303,12 +299,12 @@ impl Receiver {
     /// This function will return an IO error if the queue is already in use for
     /// receiving, which is indicated by a lock file. Also, any other IO error
     /// encountered while opening will be sent.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This function will panic if it is not able to set up the notification
     /// handler to watch for file changes.
-    pub async fn open<P: AsRef<Path>>(base: P) -> io::Result<Receiver> {
+    pub fn open<P: AsRef<Path>>(base: P) -> io::Result<Receiver> {
         // Guarantee that the queue exists:
         create_dir_all(base.as_ref())?;
 
@@ -322,8 +318,7 @@ impl Receiver {
         log::trace!("receiver lock acquired. Receiver state now is {:?}", state);
 
         // Put the needle on the groove (oh! the 70's):
-        let mut tail_follower =
-            TailFollower::open(segment_filename(base.as_ref(), state.segment)).await?;
+        let mut tail_follower = TailFollower::open(segment_filename(base.as_ref(), state.segment))?;
         tail_follower.seek(io::SeekFrom::Start(state.position))?;
 
         log::trace!("last segment opened fo reading");
@@ -354,8 +349,7 @@ impl Receiver {
         }
 
         // Start listening to new segments:
-        self.tail_follower =
-            TailFollower::open(segment_filename(&self.base, self.state.segment)).await?;
+        self.tail_follower = TailFollower::open(segment_filename(&self.base, self.state.segment))?;
 
         log::trace!("acquired new tail follower");
 
@@ -397,9 +391,9 @@ impl Receiver {
 
     /// Tries to retrieve an element from the queue. The returned value is a
     /// guard that will only commit state changes to the queue when dropped.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This function will panic if it has to start reading a new segment and
     /// it is not able to set up the notification handler to watch for file
     /// changes.
@@ -415,9 +409,9 @@ impl Receiver {
 
     /// Tries to remove a number of elements from the queue. The returned value
     /// is a guard that will only commit state changes to the queue when dropped.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This function will panic if it has to start reading a new segment and
     /// it is not able to set up the notification handler to watch for file
     /// changes.
@@ -437,9 +431,9 @@ impl Receiver {
 
     /// Tries to a number of elements from the queue. The returned value is a
     /// guard that will only commit state changes to the queue when dropped.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This function will panic if it has to start reading a new segment and
     /// it is not able to set up the notification handler to watch for file
     /// changes.
@@ -518,9 +512,9 @@ impl<'a, T> RecvGuard<'a, T> {
 
     /// Rolls the reader back to the previous point, negating the changes made
     /// on the queue.
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// If there is some error while moving the reader back, this error will be
     /// return.
     pub fn rollback(self) -> io::Result<()> {
@@ -531,11 +525,8 @@ impl<'a, T> RecvGuard<'a, T> {
 }
 
 /// Convenience function for opening the queue for both sending and receiving.
-pub async fn channel<P: AsRef<Path>>(base: P) -> io::Result<(Sender, Receiver)> {
-    Ok((
-        Sender::open(base.as_ref())?,
-        Receiver::open(base.as_ref()).await?,
-    ))
+pub fn channel<P: AsRef<Path>>(base: P) -> io::Result<(Sender, Receiver)> {
+    Ok((Sender::open(base.as_ref())?, Receiver::open(base.as_ref())?))
 }
 
 /// Deletes a queue at the given path. This function will fail if the queue is
@@ -544,7 +535,7 @@ pub fn clear<P: AsRef<Path>>(base: P) -> io::Result<()> {
     let mut send_lock = acquire_send_lock(base.as_ref())?;
     let mut recv_lock = acquire_recv_lock(base.as_ref())?;
 
-    // Sets the the locks to ignore when their files magically disappear. 
+    // Sets the the locks to ignore when their files magically disappear.
     send_lock.ignore();
     recv_lock.ignore();
 
@@ -601,7 +592,7 @@ mod tests {
 
         // Dequeue:
         futures::executor::block_on(async {
-            let mut receiver = Receiver::open("data/enqueue-then-dequeue").await.unwrap();
+            let mut receiver = Receiver::open("data/enqueue-then-dequeue").unwrap();
             let dataset_iter = dataset.iter();
             let mut i = 0u64;
 
@@ -623,7 +614,7 @@ mod tests {
         let mut sender = Sender::open("data/enqueue-and-dequeue").unwrap();
 
         futures::executor::block_on(async {
-            let mut receiver = Receiver::open("data/enqueue-and-dequeue").await.unwrap();
+            let mut receiver = Receiver::open("data/enqueue-and-dequeue").unwrap();
             let mut i = 0;
 
             for data in &dataset {
@@ -657,9 +648,7 @@ mod tests {
         // Dequeue:
         let dequeue = std::thread::spawn(move || {
             futures::executor::block_on(async {
-                let mut receiver = Receiver::open("data/enqueue-dequeue-parallel")
-                    .await
-                    .unwrap();
+                let mut receiver = Receiver::open("data/enqueue-dequeue-parallel").unwrap();
                 let dataset_iter = arc_receiver.iter();
                 let mut i = 0u64;
 

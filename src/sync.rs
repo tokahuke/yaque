@@ -4,7 +4,7 @@ use notify::event::{Event, EventKind, ModifyKind};
 use notify::{RecommendedWatcher, Watcher};
 use std::fs::*;
 use std::future::Future;
-use std::io::{self, Read, Write, Seek};
+use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -154,8 +154,10 @@ impl TailFollower {
         }
     }
 
-    /// Tries to open a file, awaitng for its creation, if necessary.
-    pub async fn open<P>(path: P) -> io::Result<TailFollower>
+    /// Tries to open a file for reading, creating it, if necessary. This is
+    /// not atomic: someone might sneak in just in the right moment and delete
+    /// the file before we open it for reading. To prevent this, use a lockfile.
+    pub fn open<P>(path: P) -> io::Result<TailFollower>
     where
         P: 'static + AsRef<Path> + Send + Sync,
     {
@@ -165,12 +167,16 @@ impl TailFollower {
         // Set up creation watcher:
         let _creation_watcher = file_creation_watcher(&path, waker.clone());
 
-        // Open file:
-        let file = Open {
-            waker: &*waker,
-            path: &path,
+        // "Touch" the file and then open it to ensure its existence:
+        // Any errors here are OK.
+        let maybe_new = OpenOptions::new().create_new(true).append(true).open(&path);
+
+        if maybe_new.is_ok() {
+            log::debug!("file `{:?}` didn't exist. Created new", path.as_ref());
         }
-        .await?;
+
+        // Someone might snear
+        let file = File::open(&path)?;
 
         Ok(TailFollower::new(path, file))
     }
