@@ -26,7 +26,7 @@ on creation, it (and possibly all its parent directories) will be created.
 ```rust
 use yaque::channel;
 
-let (mut sender, mut receiver) = channel("data/my-queue").await.unwrap();
+let (mut sender, mut receiver) = channel("data/my-queue").unwrap();
 ```
 You can also use `Sender::open` and `Receiver::open` to open only one half
 of the channel, if you need to.
@@ -36,7 +36,7 @@ that the receiving method, `Receiver::recv` is assynchronous. Writing to
 the queue with the sender is basically lock-free and atomic.
 ```rust
 sender.send(b"some data").unwrap();
-let data = receiver.recv().await.unwrap();
+let data = receiver.recv().unwrap();
 
 assert_eq!(&*data, b"some data");
 ```
