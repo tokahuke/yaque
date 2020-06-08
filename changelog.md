@@ -6,7 +6,7 @@
 the the segment file to be created, the `Receiver` now atomically creates it if
 it doesn't exist.
 
-## Version 0.3.0:
+## Version 0.3.0s:
 
 * `clear` is now `try_clear`. The method `clear` will be async and await the
 queue to be accessible.
