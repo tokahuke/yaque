@@ -15,3 +15,12 @@ will have to be always invoked explicitly.
 * You now may save the state of the queue explicitly in `Sender` and `Receiver`.
 You can use this to backup the queue from time to time, which is useful if you
 fear your program may abort.
+
+# Version 0.3.1:
+
+* Solved a bug in `RecvGuard::into_inner`: it was rolling back instead of
+committing.
+
+# Version 0.3.2:
+
+* Typo correction.
