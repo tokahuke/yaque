@@ -118,12 +118,6 @@ impl TailFollower {
     where
         P: 'static + AsRef<Path> + Send + Sync,
     {
-        // // Set up creation waker:
-        // let waker = Arc::new(Mutex::new(None));
-
-        // // Set up creation watcher:
-        // let _creation_watcher = file_creation_watcher(&path, waker.clone());
-
         // "Touch" the file and then open it to ensure its existence:
         // Any errors here are OK.
         let maybe_new = OpenOptions::new().create_new(true).append(true).open(&path);
@@ -132,7 +126,6 @@ impl TailFollower {
             log::debug!("file `{:?}` didn't exist. Created new", path.as_ref());
         }
 
-        // Someone might snear
         let file = File::open(&path)?;
 
         Ok(TailFollower::new(path, file))
@@ -142,7 +135,7 @@ impl TailFollower {
         self.file.seek(seek).map(|_| ())
     }
 
-    /// Tries to fill the supplied buffer assynchronously. Be carefull, since
+    /// Tries to fill the supplied buffer asynchronously. Be careful, since
     /// an EOF (or an interrupted) is considered as "pending". If no enough
     /// data is written to the file, the future will never resolve.
     pub fn read_exact<'a>(&'a mut self, buffer: &'a mut [u8]) -> ReadExact<'a> {
@@ -166,7 +159,7 @@ impl TailFollower {
 //     type Output = io::Result<File>;
 //     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
 //         // Set the waker in the file watcher:
-//         let mut lock = self.waker.lock().expect("waker mutex posoned");
+//         let mut lock = self.waker.lock().expect("waker mutex poisoned");
 //         *lock = Some(context.waker().clone());
 
 //         match File::open(self.path.as_ref()) {
@@ -189,7 +182,7 @@ impl<'a> Future for ReadExact<'a> {
     type Output = io::Result<()>;
     fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         // Set the waker in the file watcher:
-        let mut lock = self.waker.lock().expect("waker mutex posoned");
+        let mut lock = self.waker.lock().expect("waker mutex poisoned");
         *lock = Some(context.waker().clone());
 
         // Now, get the slice.

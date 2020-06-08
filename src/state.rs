@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 /// The internal state of one side of the queue.
 #[derive(Debug, PartialEq)]
 pub struct QueueState {
-    /// The mininum size of a queue segment. Normally, this will be very near
+    /// The minimum size of a queue segment. Normally, this will be very near
     /// the final size of the segment if the elements are small enough.
     pub segment_size: u64,
     /// The number of the actual segment.
     pub segment: u64,
-    /// The byte position within the segment (the positiona that can be reached
+    /// The byte position within the segment (the position that can be reached
     /// by using Seek::seek).
     pub position: u64,
 }

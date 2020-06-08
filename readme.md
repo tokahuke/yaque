@@ -4,17 +4,17 @@
 <a href="https://crates.io/crates/yaque"><img src="https://img.shields.io/crates/v/yaque.svg"></a>
 
 Yaque is yet another disk-backed persistent queue for Rust. It implements
-an SPSC channel using you OS' filesystem. Its main advantages over a simple
+an SPSC channel using your OS' filesystem. Its main advantages over a simple
 `VecDeque<T>` are that
 * You are not constrained by your RAM size, just by your disk size. This
 means you can store gigabytes of data without getting OOM killed.
 * Your data is safe even if you program panics. All the queue state is
 written to the disk when the queue is dropped.
-* Your data can *persistence*, that is, can exisit thrhough multiple executions
+* Your data can *persistence*, that is, can exist through multiple executions
 of your program. Think of it as a very rudimentary kind of database.
 * You can pass data between two processes.
 
-Yaque is _assynchronous_ and built directly on top of `mio` and `notify`.
+Yaque is _asynchronous_ and built directly on top of `mio` and `notify`.
 It is therefore completely agnostic to the runtime you are using for you
 application. It will work smoothly with `tokio`, with `async-std` or any
 other executor of your choice.
@@ -22,7 +22,7 @@ other executor of your choice.
 ## Sample usage
 
 To create a new queue, just use the `channel` function, passing a
-directory path on which to mount the queue. If the directiory does not exist
+directory path on which to mount the queue. If the directory does not exist
 on creation, it (and possibly all its parent directories) will be created.
 ```rust
 use yaque::channel;
@@ -35,7 +35,7 @@ You can also use `Sender::open` and `Receiver::open` to open only one
 half of the channel, if you need to.
 
 The usage is similar to the MPSC channel in the standard library, except
-that the receiving method, `Receiver::recv` is assynchronous. Writing to
+that the receiving method, `Receiver::recv` is asynchronous. Writing to
 the queue with the sender is basically lock-free and atomic.
 ```rust
 use yaque::{channel, try_clear};
@@ -62,20 +62,20 @@ futures::executor::block_on(async {
 try_clear("data/my-queue").unwrap();
 ```
 The returned value `data` is a kind of guard that implements `Deref` and
-`DerefMut` on the undelying type.
+`DerefMut` on the underlying type.
 
 ## `RecvGuard` and transactional behavior
 
 One important thing to notice is that reads from the queue are
 _transactional_. The `Receiver::recv` returns a `RecvGuard` that acts as
 a _dead man switch_. If dropped, it will revert the dequeue operation,
-unless `RecvGuard::commit` is explicitely called. This ensures that
+unless `RecvGuard::commit` is explicitly called. This ensures that
 the operation reverts on panics and early returns from errors (such as when
 using the `?` notation). However, it is necessary to perform one more
-filesystem oepration while rolling back. During drop, this is done on a
+filesystem operation while rolling back. During drop, this is done on a
 "best effort" basis: if an error occurs, it is logged and ignored. This is done
 because errors cannot propagate outside a drop and panics in drops risk the
-program being aborted. If you _have_ any clenaup behavior for an error from
+program being aborted. If you _have_ any cleanup behavior for an error from
 rolling back, you may call `RecvGuard::rollback` which _will_ return the
 underlying error. 
 
@@ -91,8 +91,8 @@ operation is made. See `Sender::send_batch`, `Receiver::recv_batch` and
 
 During some anomalous behavior, the queue might enter an inconsistent state.
 This inconsistency is mainly related to the position of the sender and of
-the receiver in the queue. Writting to the queue is an atomic operation.
-Therefore, unless there is something realy wrong with your OS, you should be
+the receiver in the queue. Writing to the queue is an atomic operation.
+Therefore, unless there is something really wrong with your OS, you should be
 fine. 
 
 The queue is (almost) guaranteed to save all the most up-to-date metadata
@@ -106,7 +106,7 @@ is [async-signal-safe](https://man7.org/linux/man-pages/man7/signal-safety.7.htm
 so you may set up a bare signal hook directly using, for example,
 [`signal_hook`](https://docs.rs/signal-hook/), if you are the sort of person
 that enjoys `unsafe` code. If not, there are a ton of completely safe
-alteratives out there. Choose the one that suits you the best.
+alternatives out there. Choose the one that suits you the best.
 
 Unfortunately, there are times when you get `Aborted` or `Killed`. When this
 happens, maybe not everything is lost yet. First of all, you will end up
@@ -122,14 +122,14 @@ of two positions:
 
 2. the position indicated in the metadata file.
 
-Depending on your usecase, this might be information enough so that not all
+Depending on your use case, this might be information enough so that not all
 hope is lost. However, this is all you will get. 
 
 If you really want to err on the safer side, you may use `Sender::save`
 and `Receiver::save` to periodically back the queue state up. Just choose
 you favorite timer implementation and set a simple periodical task up every
 hundreds of milliseconds. However, be warned that this is only a _mitigation_
-of consistenciy problems, not a solution. 
+of consistency problems, not a solution. 
 
 ## Known issues and next steps
 

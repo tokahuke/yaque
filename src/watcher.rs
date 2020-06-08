@@ -13,7 +13,7 @@ use std::task::Waker;
 //     let mut watcher =
 //         notify::immediate_watcher(move |maybe_event: notify::Result<notify::Event>| {
 //             match maybe_event.expect("received error from watcher") {
-//                 // When any modificatin in the file happens
+//                 // When any modification in the file happens
 //                 Event {
 //                     kind: EventKind::Create(_),
 //                     ..
@@ -88,7 +88,7 @@ where
     let mut watcher =
         notify::immediate_watcher(move |maybe_event: notify::Result<notify::Event>| {
             match maybe_event.expect("received error from watcher") {
-                // When any modificatin in the file happens
+                // When any modification in the file happens
                 Event {
                     kind: EventKind::Modify(ModifyKind::Data(_)),
                     ..

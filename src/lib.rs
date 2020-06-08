@@ -1,17 +1,17 @@
 //! # Yaque: Yet Another QUEue
 //!
 //! Yaque is yet another disk-backed persistent queue for Rust. It implements
-//! an SPSC channel using you OS' filesystem. Its main advantages over a simple
+//! an SPSC channel using your OS' filesystem. Its main advantages over a simple
 //! `VecDeque<T>` are that
 //! * You are not constrained by your RAM size, just by your disk size. This
 //! means you can store gigabytes of data without getting OOM killed.
 //! * Your data is safe even if you program panics. All the queue state is
 //! written to the disk when the queue is dropped.
-//! * Your data can *persistence*, that is, can exisit thrhough multiple executions
+//! * Your data can *persistence*, that is, can exist through multiple executions
 //! of your program. Think of it as a very rudimentary kind of database.
 //! * You can pass data between two processes.
 //!
-//! Yaque is _assynchronous_ and built directly on top of `mio` and `notify`.
+//! Yaque is _asynchronous_ and built directly on top of `mio` and `notify`.
 //! It is therefore completely agnostic to the runtime you are using for you
 //! application. It will work smoothly with `tokio`, with `async-std` or any
 //! other executor of your choice.
@@ -19,7 +19,7 @@
 //! ## Sample usage
 //!
 //! To create a new queue, just use the [`channel`] function, passing a
-//! directory path on which to mount the queue. If the directiory does not exist
+//! directory path on which to mount the queue. If the directory does not exist
 //! on creation, it (and possibly all its parent directories) will be created.
 //! ```
 //! use yaque::channel;
@@ -32,7 +32,7 @@
 //! half of the channel, if you need to.
 //!
 //! The usage is similar to the MPSC channel in the standard library, except
-//! that the receiving method, [`Receiver::recv`] is assynchronous. Writing to
+//! that the receiving method, [`Receiver::recv`] is asynchronous. Writing to
 //! the queue with the sender is basically lock-free and atomic.
 //! ```
 //! use yaque::{channel, try_clear};
@@ -59,20 +59,20 @@
 //! try_clear("data/my-queue").unwrap();
 //! ```
 //! The returned value `data` is a kind of guard that implements `Deref` and
-//! `DerefMut` on the undelying type.
+//! `DerefMut` on the underlying type.
 //!
 //! ## [`RecvGuard`] and transactional behavior
 //!
 //! One important thing to notice is that reads from the queue are
 //! _transactional_. The `Receiver::recv` returns a [`RecvGuard`] that acts as
 //! a _dead man switch_. If dropped, it will revert the dequeue operation,
-//! unless [`RecvGuard::commit`] is explicitely called. This ensures that
+//! unless [`RecvGuard::commit`] is explicitly called. This ensures that
 //! the operation reverts on panics and early returns from errors (such as when
 //! using the `?` notation). However, it is necessary to perform one more
-//! filesystem oepration while rolling back. During drop, this is done on a
+//! filesystem operation while rolling back. During drop, this is done on a
 //! "best effort" basis: if an error occurs, it is logged and ignored. This is done
 //! because errors cannot propagate outside a drop and panics in drops risk the
-//! program being aborted. If you _have_ any clenaup behavior for an error from
+//! program being aborted. If you _have_ any cleanup behavior for an error from
 //! rolling back, you may call [`RecvGuard::rollback`] which _will_ return the
 //! underlying error. 
 //!
@@ -88,8 +88,8 @@
 //! 
 //! During some anomalous behavior, the queue might enter an inconsistent state.
 //! This inconsistency is mainly related to the position of the sender and of
-//! the receiver in the queue. Writting to the queue is an atomic operation.
-//! Therefore, unless there is something realy wrong with your OS, you should be
+//! the receiver in the queue. Writing to the queue is an atomic operation.
+//! Therefore, unless there is something really wrong with your OS, you should be
 //! fine. 
 //! 
 //! The queue is (almost) guaranteed to save all the most up-to-date metadata
@@ -103,7 +103,7 @@
 //! so you may set up a bare signal hook directly using, for example,
 //! [`signal_hook`](https://docs.rs/signal-hook/), if you are the sort of person
 //! that enjoys `unsafe` code. If not, there are a ton of completely safe
-//! alteratives out there. Choose the one that suits you the best.
+//! alternatives out there. Choose the one that suits you the best.
 //! 
 //! Unfortunately, there are times when you get `Aborted` or `Killed`. When this
 //! happens, maybe not everything is lost yet. First of all, you will end up
@@ -119,14 +119,14 @@
 //! 
 //! 2. the position indicated in the metadata file.
 //! 
-//! Depending on your usecase, this might be information enough so that not all
+//! Depending on your use case, this might be information enough so that not all
 //! hope is lost. However, this is all you will get. 
 //! 
 //! If you really want to err on the safer side, you may use [`Sender::save`]
 //! and [`Receiver::save`] to periodically back the queue state up. Just choose
 //! you favorite timer implementation and set a simple periodical task up every
 //! hundreds of milliseconds. However, be warned that this is only a _mitigation_
-//! of consistenciy problems, not a solution. 
+//! of consistency problems, not a solution. 
 //! 
 //! ## Known issues and next steps
 //!
@@ -199,7 +199,7 @@ fn try_acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
     })
 }
 
-/// Acquire the sender lock for a queue, awaitn if locked.
+/// Acquire the sender lock for a queue, awaiting if locked.
 async fn acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
     FileGuard::lock(send_lock_filename(base.as_ref())).await
 }
@@ -293,7 +293,7 @@ impl Sender {
         self.file.write(&HEADER_EOF.to_be_bytes())?;
         self.file.flush()?;
 
-        // Preserves the already allocaed buffer:
+        // Preserves the already allocated buffer:
         *self.file.get_mut() = OpenOptions::new()
             .create(true)
             .append(true)
@@ -306,7 +306,7 @@ impl Sender {
     ///
     /// # Errors
     ///
-    /// This function returns any underlying errors encoutered while writing or
+    /// This function returns any underlying errors encountered while writing or
     /// flushing the queue.
     pub fn send<D: AsRef<[u8]>>(&mut self, data: D) -> io::Result<()> {
         // Write to the queue and flush:
@@ -357,7 +357,7 @@ impl Drop for Sender {
     }
 }
 
-/// The receiver part of the queue. This part is assynchronous and therefore
+/// The receiver part of the queue. This part is asynchronous and therefore
 /// needs an executor that will the poll the futures to completion.
 pub struct Receiver {
     _file_guard: FileGuard,
@@ -387,7 +387,7 @@ impl Receiver {
 
         log::trace!("created queue directory");
 
-        // Acquire guarde and state:
+        // Acquire guard and state:
         let file_guard = try_acquire_recv_lock(base.as_ref())?;
         let mut persistence = FilePersistence::new();
         let state = persistence.open_recv(base.as_ref())?;
@@ -567,11 +567,11 @@ impl Drop for Receiver {
 
 /// A guard that will only log changes on the queue state when dropped.
 ///
-/// If it is dropped in a thread that is panicking, no chage will be logged,
+/// If it is dropped in a thread that is panicking, no change will be logged,
 /// allowing for the items to be consumed when a new instance recovers. This
 /// allows transactional use of the queue.
 ///
-/// This struct implements `Deref` and `DerefMut`. If you realy, realy want
+/// This struct implements `Deref` and `DerefMut`. If you really, really want
 /// ownership, there is `RecvGuard::into_inner`, but be careful.
 pub struct RecvGuard<'a, T> {
     receiver: &'a mut Receiver,
@@ -611,7 +611,7 @@ impl<'a, T> DerefMut for RecvGuard<'a, T> {
 
 impl<'a, T> RecvGuard<'a, T> {
     /// Commits the transaction and returns the underlying value. If you
-    /// accedentaly lose this value from now on, it's your own fault!
+    /// accidentally lose this value from now on, it's your own fault!
     pub fn into_inner(mut self) -> T {
         let item = self.item.take().expect("unreachable");
         self.commit();
@@ -758,7 +758,7 @@ mod tests {
         });
     }
 
-    /// Test enqueuing and dequeueing, round robin, with no persistenceence.
+    /// Test enqueuing and dequeueing, round robin, with no persistence.
     #[test]
     fn test_enqueue_and_dequeue() {
         let _ = simple_logger::init_with_level(log::Level::Trace);
@@ -782,7 +782,7 @@ mod tests {
         });
     }
 
-    /// Test enqueuing and dequeueing in parallel, with no persistenceence.
+    /// Test enqueuing and dequeueing in parallel, with no persistence.
     #[test]
     fn test_enqueue_dequeue_parallel() {
         let _ = simple_logger::init_with_level(log::Level::Trace);
