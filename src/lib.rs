@@ -367,14 +367,6 @@ pub struct Receiver {
     persistence: FilePersistence,
 }
 
-impl Drop for Receiver {
-    fn drop(&mut self) {
-        if let Err(err) = self.persistence.save(&self.state) {
-            log::error!("could not release receiver lock: {}", err);
-        }
-    }
-}
-
 impl Receiver {
     /// Opens a queue for reading. The access will be exclusive, based on the
     /// existence of the temporary file `recv.lock` inside the queue folder.
@@ -504,7 +496,7 @@ impl Receiver {
             receiver: self,
             len: 4 + data.len(),
             item: Some(data),
-            set_to_commit: false,
+            override_drop: false,
         })
     }
 
@@ -527,7 +519,7 @@ impl Receiver {
             receiver: self,
             len: data.iter().map(|item| 4 + item.len()).sum(),
             item: Some(data),
-            set_to_commit: false,
+            override_drop: false,
         })
     }
 
@@ -560,8 +552,16 @@ impl Receiver {
             receiver: self,
             len: data.iter().map(|item| 4 + item.len()).sum(),
             item: Some(data),
-            set_to_commit: false,
+            override_drop: false,
         })
+    }
+}
+
+impl Drop for Receiver {
+    fn drop(&mut self) {
+        if let Err(err) = self.persistence.save(&self.state) {
+            log::error!("could not release receiver lock: {}", err);
+        }
     }
 }
 
@@ -577,14 +577,14 @@ pub struct RecvGuard<'a, T> {
     receiver: &'a mut Receiver,
     len: usize,
     item: Option<T>,
-    set_to_commit: bool,
+    override_drop: bool,
 }
 
 impl<'a, T> Drop for RecvGuard<'a, T> {
     fn drop(&mut self) {
-        // On panic, it is safer if we do *not* do anything.
-        // Of course, this makes `RecvGuard` not `UnwindSafe.
-        if !self.set_to_commit {
+        if self.override_drop {
+            
+        } else {
             if let Err(err) = self
                 .receiver
                 .tail_follower
@@ -618,7 +618,8 @@ impl<'a, T> RecvGuard<'a, T> {
 
     /// Commits the changes to the queue, consuming this `RecvGuard`.
     pub fn commit(mut self) {
-        self.set_to_commit = true;
+        self.override_drop = true;
+        self.receiver.state.position += self.len as u64;
         drop(self);
     }
 
@@ -632,8 +633,7 @@ impl<'a, T> RecvGuard<'a, T> {
     /// If there is some error while moving the reader back, this error will be
     /// return.
     pub fn rollback(mut self) -> io::Result<()> {
-        // Paradoxical flag! This is correct. This is *not* a typo.
-        self.set_to_commit = true;
+        self.override_drop = true;
 
         // Do it manually.
         self.receiver
