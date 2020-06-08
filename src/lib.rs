@@ -613,7 +613,10 @@ impl<'a, T> RecvGuard<'a, T> {
     /// Commits the transaction and returns the underlying value. If you
     /// accedentaly lose this value from now on, it's your own fault!
     pub fn into_inner(mut self) -> T {
-        self.item.take().expect("unreachable")
+        let item = self.item.take().expect("unreachable");
+        self.commit();
+        
+        item
     }
 
     /// Commits the changes to the queue, consuming this `RecvGuard`.
