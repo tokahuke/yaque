@@ -35,16 +35,28 @@
 //! that the receiving method, [`Receiver::recv`] is assynchronous. Writing to
 //! the queue with the sender is basically lock-free and atomic.
 //! ```
-//! use yaque::channel;
+//! use yaque::{channel, try_clear};
 //!
 //! futures::executor::block_on(async {
+//!     // Open using the `channel` function or directly with the constructors.
 //!     let (mut sender, mut receiver) = channel("data/my-queue").unwrap();
 //!     
+//!     // Send stuff with the sender...
 //!     sender.send(b"some data").unwrap();
+//!
+//!     // ... and receive it in the other side.
 //!     let data = receiver.recv().await.unwrap();
 //!
 //!     assert_eq!(&*data, b"some data");
-//! })
+//!
+//!     // Call this to make the changes to the queue permanent.
+//!     // Not calling it will revert the state of the queue.
+//!     data.commit();
+//! });
+//!
+//! // After everything is said and done, you may delete the queue.
+//! // Use `clear` for awaiting for the queue to be released.
+//! try_clear("data/my-queue").unwrap();
 //! ```
 //! The returned value `data` is a kind of guard that implements `Deref` and
 //! `DerefMut` on the undelying type.
@@ -52,15 +64,17 @@
 //! ## [`RecvGuard`] and transactional behavior
 //!
 //! One important thing to notice is that reads from the queue are
-//! _transactional_. The `Receiver::recv` returns a [`RecvGuard`] that only
-//! commits the dequeing operation, that is, makes it official in the disk,
-//! when dropped. You can override this behavior using [`RecvGuard::rollback`],
-//! although this will inccur in one more filesystem operation. If a thread
-//! panics while holding a `RecvGuard`, instead of commiting the dequeueing
-//! operation, it will _try_ to rollback. If the rollback operation is
-//! unsuccessful, the operation will be commited (possibly with data loss),
-//! since to panic while panicking results in the process being aborted, which
-//! is Really Bad.
+//! _transactional_. The `Receiver::recv` returns a [`RecvGuard`] that acts as
+//! a _dead man switch_. If dropped, it will revert the dequeue operation,
+//! unless [`RecvGuard::commit`] is explicitely called. This ensures that
+//! the operation reverts on panics and early returns from errors (such as when
+//! using the `?` notation). However, it is necessary to perform one more
+//! filesystem oepration while rolling back. During drop, this is done on a
+//! "best effort" basis: if an error occurs, it is logged and ignored. This is done
+//! because errors cannot propagate outside a drop and panics in drops risk the
+//! program being aborted. If you _have_ any clenaup behavior for an error from
+//! rolling back, you may call [`RecvGuard::rollback`] which _will_ return the
+//! underlying error. 
 //!
 //! ## Batches
 //!
@@ -70,12 +84,57 @@
 //! operation is made. See [`Sender::send_batch`], [`Receiver::recv_batch`] and
 //! [`Receiver::recv_while`] for more information on receiver batches.
 //!
+//! ## `Ctrl+C` and other unexpected events
+//! 
+//! During some anomalous behavior, the queue might enter an inconsistent state.
+//! This inconsistency is mainly related to the position of the sender and of
+//! the receiver in the queue. Writting to the queue is an atomic operation.
+//! Therefore, unless there is something realy wrong with your OS, you should be
+//! fine. 
+//! 
+//! The queue is (almost) guaranteed to save all the most up-to-date metadata
+//! for both receiving and sending parts during a panic. The only exception is
+//! if the saving operation fails. However, this is not the case if the process
+//! receives a signal from the OS. Signals from the OS are not handled
+//! automatically by this library. It is understood that the application
+//! programmer knows best how to handle them. If you chose to close queue on
+//! `Ctrl+C` or other signals, you are in luck! Saving both sides of the queue
+//! is [async-signal-safe](https://man7.org/linux/man-pages/man7/signal-safety.7.html)
+//! so you may set up a bare signal hook directly using, for example,
+//! [`signal_hook`](https://docs.rs/signal-hook/), if you are the sort of person
+//! that enjoys `unsafe` code. If not, there are a ton of completely safe
+//! alteratives out there. Choose the one that suits you the best.
+//! 
+//! Unfortunately, there are times when you get `Aborted` or `Killed`. When this
+//! happens, maybe not everything is lost yet. First of all, you will end up
+//! with a queue that is locked by no process. If you know that the process
+//! owning the locks has indeed past away, you may safely delete the lock files
+//! identified by the `.lock` extension. You will also end up with queue
+//! metadata pointing to an earlier state in time. Is is easy to guess what the
+//! sending metadata should be. Is is the top of the last segment file. However,
+//! things get trickier in the receiver side. You know that it is the greatest
+//! of two positions:
+//! 
+//! 1. the bottom of the smallest segment still present in the directory.
+//! 
+//! 2. the position indicated in the metadata file.
+//! 
+//! Depending on your usecase, this might be information enough so that not all
+//! hope is lost. However, this is all you will get. 
+//! 
+//! If you really want to err on the safer side, you may use [`Sender::save`]
+//! and [`Receiver::save`] to periodically back the queue state up. Just choose
+//! you favorite timer implementation and set a simple periodical task up every
+//! hundreds of milliseconds. However, be warned that this is only a _mitigation_
+//! of consistenciy problems, not a solution. 
+//! 
 //! ## Known issues and next steps
 //!
 //! * This is a brand new project. Although I have tested it and it will
 //! certainly not implode your computer, don't trust your life on it yet.
 //! * Wastes too much kernel time when the queue is small enough and the sender
-//! sends many frequent small messages non-atomically.
+//! sends many frequent small messages non-atomically. You can mitigate that by
+//! writing in batches to the queue.
 //! * I intend to make this an MPSC queue in the future.
 //! * There are probably unknown bugs hidden in some corner case. If you find
 //! one, please fill an issue in GitHub. Pull requests and contributions are
@@ -83,10 +142,12 @@
 
 mod state;
 mod sync;
+mod watcher;
 
 use std::fs::*;
 use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::path::{Path, PathBuf};
 
 use state::FilePersistence;
@@ -104,7 +165,7 @@ fn recv_lock_filename<P: AsRef<Path>>(base: P) -> PathBuf {
 }
 
 /// Tries to acquire the receiver lock for a queue.
-fn acquire_recv_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
+fn try_acquire_recv_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
     FileGuard::try_lock(recv_lock_filename(base.as_ref()))?.ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::Other,
@@ -116,13 +177,18 @@ fn acquire_recv_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
     })
 }
 
+/// Acquire the receiver lock for a queue, awaiting if locked.
+async fn acquire_recv_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
+    FileGuard::lock(recv_lock_filename(base.as_ref())).await
+}
+
 /// The name of the sender lock in the queue folder.
 fn send_lock_filename<P: AsRef<Path>>(base: P) -> PathBuf {
     base.as_ref().join("send.lock")
 }
 
 /// Tries to acquire the sender lock for a queue.
-fn acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
+fn try_acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
     FileGuard::try_lock(send_lock_filename(base.as_ref()))?.ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::Other,
@@ -132,6 +198,11 @@ fn acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
             ),
         )
     })
+}
+
+/// Acquire the sender lock for a queue, awaitn if locked.
+async fn acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
+    FileGuard::lock(send_lock_filename(base.as_ref())).await
 }
 
 /// The value of a header EOF.
@@ -163,7 +234,7 @@ impl Sender {
         log::trace!("created queue directory");
 
         // Acquire lock and state:
-        let file_guard = acquire_send_lock(base.as_ref())?;
+        let file_guard = try_acquire_send_lock(base.as_ref())?;
         let mut persistence = FilePersistence::new();
         let state = persistence.open_send(base.as_ref())?;
 
@@ -186,6 +257,21 @@ impl Sender {
             base: PathBuf::from(base.as_ref()),
             persistence,
         })
+    }
+
+    /// Saves the sender queue state. You do not need to use method in most
+    /// circumstances, since it is automatically done on drop (yes, it will be
+    /// called eve if your thread panics). However, you can use this function to
+    ///
+    /// 1. Make periodical backups. Use an external timer implementation for this.
+    ///
+    /// 2. Handle possible IO errors in sending. The `drop` implementation will
+    /// ignore (but log) any io errors, which may lead to data loss in an
+    /// unreliable filesystem. This happens because no errors are allowed to
+    /// propagate on drop and panicking will abort the program if drop is called
+    /// during a panic.
+    pub fn save(&mut self) -> io::Result<()> {
+        self.persistence.save(&self.state)
     }
 
     /// Just writes to the internal buffer, but doesn't flush it.
@@ -311,7 +397,7 @@ impl Receiver {
         log::trace!("created queue directory");
 
         // Acquire guarde and state:
-        let file_guard = acquire_recv_lock(base.as_ref())?;
+        let file_guard = try_acquire_recv_lock(base.as_ref())?;
         let mut persistence = FilePersistence::new();
         let state = persistence.open_recv(base.as_ref())?;
 
@@ -389,6 +475,21 @@ impl Receiver {
         Ok(data)
     }
 
+    /// Saves the receiver queue state. You do not need to use method in most
+    /// circumstances, since it is automatically done on drop (yes, it will be
+    /// called eve if your thread panics). However, you can use this function to
+    ///
+    /// 1. Make periodical backups. Use an external timer implementation for this.
+    ///
+    /// 2. Handle possible IO errors in sending. The `drop` implementation will
+    /// ignore (but log) any io errors, which may lead to data loss in an
+    /// unreliable filesystem. This happens because no errors are allowed to
+    /// propagate on drop and panicking will abort the program if drop is called
+    /// during a panic.
+    pub fn save(&mut self) -> io::Result<()> {
+        self.persistence.save(&self.state)
+    }
+
     /// Tries to retrieve an element from the queue. The returned value is a
     /// guard that will only commit state changes to the queue when dropped.
     ///
@@ -404,6 +505,7 @@ impl Receiver {
             receiver: self,
             len: 4 + data.len(),
             item: Some(data),
+            set_to_commit: false,
         })
     }
 
@@ -426,6 +528,7 @@ impl Receiver {
             receiver: self,
             len: data.iter().map(|item| 4 + item.len()).sum(),
             item: Some(data),
+            set_to_commit: false,
         })
     }
 
@@ -458,6 +561,7 @@ impl Receiver {
             receiver: self,
             len: data.iter().map(|item| 4 + item.len()).sum(),
             item: Some(data),
+            set_to_commit: false,
         })
     }
 }
@@ -474,12 +578,21 @@ pub struct RecvGuard<'a, T> {
     receiver: &'a mut Receiver,
     len: usize,
     item: Option<T>,
+    set_to_commit: bool,
 }
 
 impl<'a, T> Drop for RecvGuard<'a, T> {
     fn drop(&mut self) {
-        if !std::thread::panicking() {
-            self.receiver.state.advance_position(self.len as u64);
+        // On panic, it is safer if we do *not* do anything.
+        // Of course, this makes `RecvGuard` not `UnwindSafe.
+        if !self.set_to_commit {
+            if let Err(err) = self
+                .receiver
+                .tail_follower
+                .seek(io::SeekFrom::Current(-(self.len as i64)))
+            {
+                log::error!("unable to rollback on drop: {}", err);
+            }
         }
     }
 }
@@ -504,20 +617,26 @@ impl<'a, T> RecvGuard<'a, T> {
         self.item.take().expect("unreachable")
     }
 
-    /// Commits the changes to the queue, consuming this `RecvGuard`. This is
-    /// equivalent to `drop`.
-    pub fn commit(self) {
+    /// Commits the changes to the queue, consuming this `RecvGuard`.
+    pub fn commit(mut self) {
+        self.set_to_commit = true;
         drop(self);
     }
 
     /// Rolls the reader back to the previous point, negating the changes made
-    /// on the queue.
+    /// on the queue. This is also done on drop. However, on drop, the possible
+    /// IO error is ignored (but logged as an error) because we cannot have
+    /// errors inside drops. Use this if you want to control errors at rollback.
     ///
     /// # Errors
     ///
     /// If there is some error while moving the reader back, this error will be
     /// return.
-    pub fn rollback(self) -> io::Result<()> {
+    pub fn rollback(mut self) -> io::Result<()> {
+        // Paradoxical flag! This is correct. This is *not* a typo.
+        self.set_to_commit = true;
+
+        // Do it manually.
         self.receiver
             .tail_follower
             .seek(io::SeekFrom::Current(-(self.len as i64)))
@@ -529,11 +648,26 @@ pub fn channel<P: AsRef<Path>>(base: P) -> io::Result<(Sender, Receiver)> {
     Ok((Sender::open(base.as_ref())?, Receiver::open(base.as_ref())?))
 }
 
-/// Deletes a queue at the given path. This function will fail if the queue is
-/// in use either for sending or receiving.
-pub fn clear<P: AsRef<Path>>(base: P) -> io::Result<()> {
-    let mut send_lock = acquire_send_lock(base.as_ref())?;
-    let mut recv_lock = acquire_recv_lock(base.as_ref())?;
+/// Tries to deletes a queue at the given path. This function will fail if the
+/// queue is in use either for sending or receiving.
+pub fn try_clear<P: AsRef<Path>>(base: P) -> io::Result<()> {
+    let mut send_lock = try_acquire_send_lock(base.as_ref())?;
+    let mut recv_lock = try_acquire_recv_lock(base.as_ref())?;
+
+    // Sets the the locks to ignore when their files magically disappear.
+    send_lock.ignore();
+    recv_lock.ignore();
+
+    remove_dir_all(base.as_ref())?;
+
+    Ok(())
+}
+
+/// Deletes a queue at the given path. This function will await the queue to
+/// become available for both sending and receiving.
+pub async fn clear<P: AsRef<Path>>(base: P) -> io::Result<()> {
+    let mut send_lock = acquire_send_lock(base.as_ref()).await?;
+    let mut recv_lock = acquire_recv_lock(base.as_ref()).await?;
 
     // Sets the the locks to ignore when their files magically disappear.
     send_lock.ignore();
@@ -564,7 +698,24 @@ mod tests {
     fn create_and_clear() {
         let _ = simple_logger::init_with_level(log::Level::Trace);
         let _ = Sender::open("data/create-and-clear").unwrap();
-        clear("data/create-and-clear").unwrap();
+        try_clear("data/create-and-clear").unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn create_and_clear_fails() {
+        let _ = simple_logger::init_with_level(log::Level::Trace);
+        let sender = Sender::open("data/create-and-clear-fails").unwrap();
+        try_clear("data/create-and-clear-fails").unwrap();
+        drop(sender);
+    }
+
+    #[test]
+    fn create_and_clear_async() {
+        let _ = simple_logger::init_with_level(log::Level::Trace);
+        let _ = Sender::open("data/create-and-clear-async").unwrap();
+
+        futures::executor::block_on(async { clear("data/create-and-clear-async").await.unwrap() });
     }
 
     #[test]
@@ -600,6 +751,7 @@ mod tests {
                 let data = receiver.recv().await.unwrap();
                 assert_eq!(&*data, should_be, "at sample {}", i);
                 i += 1;
+                data.commit();
             }
         });
     }
@@ -623,6 +775,7 @@ mod tests {
                 assert_eq!(&*received, data, "at sample {}", i);
 
                 i += 1;
+                received.commit();
             }
         });
     }
@@ -656,6 +809,7 @@ mod tests {
                     let data = receiver.recv().await.unwrap();
                     assert_eq!(&*data, should_be, "at sample {}", i);
                     i += 1;
+                    data.commit();
                 }
             });
         });

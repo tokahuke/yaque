@@ -1,7 +1,6 @@
 //! Synchronization structures based on the filesystem.
 
-use notify::event::{Event, EventKind, ModifyKind};
-use notify::{RecommendedWatcher, Watcher};
+use notify::RecommendedWatcher;
 use std::fs::*;
 use std::future::Future;
 use std::io::{self, Read, Seek, Write};
@@ -9,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
+
+use crate::watcher::{file_removal_watcher, file_watcher};
 
 /// A lock using the atomicity of `OpenOptions::create_new`. Not exactly a good
 /// lock. You can easly delete it and everything goes down the drain.
@@ -51,81 +52,37 @@ impl FileGuard {
             Err(err) => Err(err),
         }
     }
+
+    pub async fn lock<P: AsRef<Path>>(path: P) -> io::Result<FileGuard> {
+        // Set up waker:
+        let waker = Arc::new(Mutex::new(None));
+
+        // Set up watcher:
+        let _watcher = file_removal_watcher(path.as_ref(), waker.clone());
+
+        Lock { path, waker }.await
+    }
 }
 
-// /// Watches for the creation of a given future file.
-// fn file_creation_watcher<P>(path: P, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
-// where
-//     P: AsRef<Path>,
-// {
-//     // Set up watcher:
-//     let mut watcher =
-//         notify::immediate_watcher(move |maybe_event: notify::Result<notify::Event>| {
-//             match maybe_event.expect("received error from watcher") {
-//                 // When any modificatin in the file happens
-//                 Event {
-//                     kind: EventKind::Create(_),
-//                     ..
-//                 } => {
-//                     waker
-//                         .lock()
-//                         .expect("waker poisoned")
-//                         .as_mut()
-//                         .map(|waker: &mut Waker| waker.wake_by_ref());
-//                 }
-//                 _ => {}
-//             }
-//         })
-//         .expect("could not create watcher");
+/// Future for the internals of [`FileGuard::lock`].
+struct Lock<P: AsRef<Path>> {
+    path: P,
+    waker: Arc<Mutex<Option<Waker>>>,
+}
 
-//     // Put watcher to run:
-//     watcher
-//         .watch(
-//             path.as_ref().parent().expect("file must have parent"),
-//             notify::RecursiveMode::NonRecursive,
-//         )
-//         .expect("could not start watching file");
+impl<P: AsRef<Path>> Future for Lock<P> {
+    type Output = io::Result<FileGuard>;
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        // Set the waker in the file watcher:
+        let mut lock = self.waker.lock().expect("waker mutex posoned");
+        *lock = Some(context.waker().clone());
 
-//     watcher
-// }
-
-/// Watches a file for changes in its content.
-fn file_watcher<P>(path: P, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
-where
-    P: AsRef<Path>,
-{
-    // Set up watcher:
-    let mut watcher =
-        notify::immediate_watcher(move |maybe_event: notify::Result<notify::Event>| {
-            match maybe_event.expect("received error from watcher") {
-                // When any modificatin in the file happens
-                Event {
-                    kind: EventKind::Modify(ModifyKind::Data(_)),
-                    ..
-                } => {
-                    waker
-                        .lock()
-                        .expect("waker poisoned")
-                        .as_mut()
-                        .map(|waker: &mut Waker| waker.wake_by_ref());
-                }
-                Event {
-                    kind: EventKind::Remove(_),
-                    ..
-                } => {
-                    log::debug!("file being watched was removed");
-                }
-                _ => {}
-            }
-        })
-        .expect("could not create watcher");
-
-    // Put watcher to run:
-    watcher
-        .watch(path, notify::RecursiveMode::NonRecursive)
-        .expect("could not start watching file");
-
-    watcher
+        match FileGuard::try_lock(self.path.as_ref()) {
+            Ok(Some(file_guard)) => Poll::Ready(Ok(file_guard)),
+            Ok(None) => Poll::Pending,
+            Err(err) => Poll::Ready(Err(err)),
+        }
+    }
 }
 
 /// Follows a file assynchronously. The file needs not to even to exist.
