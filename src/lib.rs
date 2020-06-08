@@ -147,7 +147,6 @@ mod watcher;
 use std::fs::*;
 use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
-use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::path::{Path, PathBuf};
 
 use state::FilePersistence;
