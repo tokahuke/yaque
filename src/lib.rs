@@ -7,7 +7,7 @@
 //! means you can store gigabytes of data without getting OOM killed.
 //! * Your data is safe even if you program panics. All the queue state is
 //! written to the disk when the queue is dropped.
-//! * Your data can *persistence*, that is, can exist through multiple executions
+//! * Your data can *persist*, that is, can exist through multiple executions
 //! of your program. Think of it as a very rudimentary kind of database.
 //! * You can pass data between two processes.
 //!

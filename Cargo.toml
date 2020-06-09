@@ -1,6 +1,6 @@
 [package]
 name = "yaque"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Pedro Arruda <pedrobittencourt3@protonmail.ch>"]
 edition = "2018"
 description = "Yaque is yet another disk-backed persistent queue for Rust"
