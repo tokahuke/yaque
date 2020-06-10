@@ -11,9 +11,14 @@ keywords = ["queue", "persistent", "disk", "data-structures"]
 readme = "readme.md"
 exclude = ["data"]
 
+[features]
+default = ["recovery"]
+recovery = ["sysinfo"]
+
 [dependencies]
 notify = "5.0.0-pre.2"
 log = "^0.4"
+sysinfo = { version = "0.14.5", optional = true }
 
 [dev-dependencies]
 rand = "0.7.3"

@@ -74,7 +74,7 @@
 //! because errors cannot propagate outside a drop and panics in drops risk the
 //! program being aborted. If you _have_ any cleanup behavior for an error from
 //! rolling back, you may call [`RecvGuard::rollback`] which _will_ return the
-//! underlying error. 
+//! underlying error.
 //!
 //! ## Batches
 //!
@@ -85,13 +85,13 @@
 //! [`Receiver::recv_while`] for more information on receiver batches.
 //!
 //! ## `Ctrl+C` and other unexpected events
-//! 
+//!
 //! During some anomalous behavior, the queue might enter an inconsistent state.
 //! This inconsistency is mainly related to the position of the sender and of
 //! the receiver in the queue. Writing to the queue is an atomic operation.
 //! Therefore, unless there is something really wrong with your OS, you should be
-//! fine. 
-//! 
+//! fine.
+//!
 //! The queue is (almost) guaranteed to save all the most up-to-date metadata
 //! for both receiving and sending parts during a panic. The only exception is
 //! if the saving operation fails. However, this is not the case if the process
@@ -104,7 +104,7 @@
 //! [`signal_hook`](https://docs.rs/signal-hook/), if you are the sort of person
 //! that enjoys `unsafe` code. If not, there are a ton of completely safe
 //! alternatives out there. Choose the one that suits you the best.
-//! 
+//!
 //! Unfortunately, there are times when you get `Aborted` or `Killed`. When this
 //! happens, maybe not everything is lost yet. First of all, you will end up
 //! with a queue that is locked by no process. If you know that the process
@@ -114,20 +114,20 @@
 //! sending metadata should be. Is is the top of the last segment file. However,
 //! things get trickier in the receiver side. You know that it is the greatest
 //! of two positions:
-//! 
+//!
 //! 1. the bottom of the smallest segment still present in the directory.
-//! 
+//!
 //! 2. the position indicated in the metadata file.
-//! 
+//!
 //! Depending on your use case, this might be information enough so that not all
-//! hope is lost. However, this is all you will get. 
-//! 
+//! hope is lost. However, this is all you will get.
+//!
 //! If you really want to err on the safer side, you may use [`Sender::save`]
 //! and [`Receiver::save`] to periodically back the queue state up. Just choose
 //! you favorite timer implementation and set a simple periodical task up every
 //! hundreds of milliseconds. However, be warned that this is only a _mitigation_
-//! of consistency problems, not a solution. 
-//! 
+//! of consistency problems, not a solution.
+//!
 //! ## Known issues and next steps
 //!
 //! * This is a brand new project. Although I have tested it and it will
@@ -143,6 +143,9 @@
 mod state;
 mod sync;
 mod watcher;
+
+#[cfg(feature = "recovery")]
+pub mod recovery;
 
 use std::fs::*;
 use std::io::{self, Write};
@@ -567,12 +570,15 @@ impl Drop for Receiver {
 
 /// A guard that will only log changes on the queue state when dropped.
 ///
-/// If it is dropped in a thread that is panicking, no change will be logged,
-/// allowing for the items to be consumed when a new instance recovers. This
-/// allows transactional use of the queue.
-///
+/// If it is dropped without a call to `RecvGuard::commit`, changes will be
+/// rolled back in a "best effort" policy: if any IO error is encountered
+/// during rollback, the state will be committed. If you *can* do something
+/// with the IO error, you may use `RecvGuard::rollback` explicitly to catch
+/// the error.  
+/// 
 /// This struct implements `Deref` and `DerefMut`. If you really, really want
-/// ownership, there is `RecvGuard::into_inner`, but be careful.
+/// ownership, there is `RecvGuard::into_inner`, but be careful, because you
+/// lose your chance to rollback if anything unexpected occurs.
 pub struct RecvGuard<'a, T> {
     receiver: &'a mut Receiver,
     len: usize,
@@ -583,7 +589,6 @@ pub struct RecvGuard<'a, T> {
 impl<'a, T> Drop for RecvGuard<'a, T> {
     fn drop(&mut self) {
         if self.override_drop {
-            
         } else {
             if let Err(err) = self
                 .receiver
@@ -615,7 +620,7 @@ impl<'a, T> RecvGuard<'a, T> {
     pub fn into_inner(mut self) -> T {
         let item = self.item.take().expect("unreachable");
         self.commit();
-        
+
         item
     }
 
@@ -782,7 +787,7 @@ mod tests {
         });
     }
 
-    /// Test enqueuing and dequeueing in parallel, with no persistence.
+    /// Test enqueuing and dequeueing in parallel.
     #[test]
     fn test_enqueue_dequeue_parallel() {
         let _ = simple_logger::init_with_level(log::Level::Trace);
@@ -812,6 +817,56 @@ mod tests {
                     assert_eq!(&*data, should_be, "at sample {}", i);
                     i += 1;
                     data.commit();
+                }
+            });
+        });
+
+        enqueue.join().expect("enqueue thread panicked");
+        dequeue.join().expect("dequeue thread panicked");
+    }
+
+    /// Test enqueuing and dequeueing in parallel, using batches.
+    #[test]
+    fn test_enqueue_dequeue_parallel_with_batches() {
+        let _ = simple_logger::init_with_level(log::Level::Trace);
+
+        // Generate data:
+        let mut dataset = vec![];
+        let mut batch = vec![];
+
+        for data in data_lots_of_data().take(10_000_000) {
+            batch.push(data);
+
+            if batch.len() >= 256 {
+                dataset.push(batch);
+                batch = vec![];
+            }
+        }
+
+        let arc_sender = Arc::new(dataset);
+        let arc_receiver = arc_sender.clone();
+
+        // Enqueue:
+        let enqueue = std::thread::spawn(move || {
+            let mut sender = Sender::open("data/enqueue-dequeue-parallel-with-batches").unwrap();
+            for batch in &*arc_sender {
+                sender.send_batch(batch).unwrap();
+            }
+        });
+
+        // Dequeue:
+        let dequeue = std::thread::spawn(move || {
+            futures::executor::block_on(async {
+                let mut receiver =
+                    Receiver::open("data/enqueue-dequeue-parallel-with-batches").unwrap();
+                let dataset_iter = arc_receiver.iter();
+                let mut i = 0u64;
+
+                for should_be in dataset_iter {
+                    let batch = receiver.recv_batch(256).await.unwrap();
+                    assert_eq!(&*batch, should_be, "at sample {}", i);
+                    i += 1;
+                    batch.commit();
                 }
             });
         });

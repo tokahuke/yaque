@@ -24,6 +24,8 @@ committing.
 ## Version 0.3.2:
 
 * Typo corrections.
-* Improvements to the docs.
-* Feature `recovery`.
-* Expose async file guard.
+* Small improvements to docs.
+* Feature `recovery`: utilities for unlocking locks and to guess send metadata.
+Guessing recv metadata is trickier and will be "coming soon".
+* Performance improvements to the `Receiver`: buffer input + less lock contention.
+This is _quite_ significant in terms of throughput. 

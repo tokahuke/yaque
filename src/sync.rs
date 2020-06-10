@@ -87,7 +87,7 @@ impl<P: AsRef<Path>> Future for Lock<P> {
 
 /// Follows a file assynchronously. The file needs not to even to exist.
 pub struct TailFollower {
-    file: File,
+    file: io::BufReader<File>,
     _watcher: RecommendedWatcher,
     waker: Arc<Mutex<Option<Waker>>>,
 }
@@ -105,7 +105,7 @@ impl TailFollower {
         let watcher = file_watcher(path, waker.clone());
 
         TailFollower {
-            file,
+            file: io::BufReader::new(file),
             _watcher: watcher,
             waker,
         }
@@ -172,35 +172,46 @@ impl TailFollower {
 
 /// The future returned by `TailFollower::read_exact`.
 pub struct ReadExact<'a> {
-    file: &'a mut File,
+    file: &'a mut io::BufReader<File>,
     buffer: &'a mut [u8],
     waker: &'a Mutex<Option<Waker>>,
     filled: usize,
 }
 
+impl<'a> ReadExact<'a> {
+    fn read_until_you_drain(&mut self) -> Poll<io::Result<()>> {
+        loop {
+            break match self.file.read(&mut self.buffer[self.filled..]) {
+                Ok(0) => Poll::Pending,
+                Ok(i) => {
+                    self.filled += i;
+                    if self.filled == self.buffer.len() {
+                        Poll::Ready(Ok(()))
+                    } else {
+                        continue;
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => Poll::Pending,
+                Err(err) => Poll::Ready(Err(err)),
+            };
+        }
+    }
+}
+
 impl<'a> Future for ReadExact<'a> {
     type Output = io::Result<()>;
     fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        // Set the waker in the file watcher:
-        let mut lock = self.waker.lock().expect("waker mutex poisoned");
-        *lock = Some(context.waker().clone());
-
-        // Now, get the slice.
-        let self_mut = &mut *self; // tricky Pins!!! Need this to guide the borrow checker.
-
         // Now see what happens when we read.
-        match self_mut.file.read(&mut self_mut.buffer[self_mut.filled..]) {
-            Ok(0) => Poll::Pending,
-            Ok(i) => {
-                self.filled += i;
-                if self.filled == self.buffer.len() {
-                    Poll::Ready(Ok(()))
-                } else {
-                    Poll::Pending
-                }
-            }
-            Err(err) if err.kind() == io::ErrorKind::Interrupted => Poll::Pending,
-            Err(err) => Poll::Ready(Err(err)),
+        let outcome = self.read_until_you_drain();
+
+        if outcome.is_pending() {
+            // Set the waker in the file watcher:
+            let mut lock = self.waker.lock().expect("waker mutex poisoned");
+            *lock = Some(context.waker().clone());
+
+            self.read_until_you_drain()
+        } else {
+            outcome
         }
     }
 }

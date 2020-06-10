@@ -10,7 +10,7 @@ an SPSC channel using your OS' filesystem. Its main advantages over a simple
 means you can store gigabytes of data without getting OOM killed.
 * Your data is safe even if you program panics. All the queue state is
 written to the disk when the queue is dropped.
-* Your data can *persistence*, that is, can exist through multiple executions
+* Your data can *persist*, that is, can exist through multiple executions
 of your program. Think of it as a very rudimentary kind of database.
 * You can pass data between two processes.
 
@@ -135,9 +135,8 @@ of consistency problems, not a solution.
 
 * This is a brand new project. Although I have tested it and it will
 certainly not implode your computer, don't trust your life on it yet.
-* Wastes too much kernel time when the queue is small enough and the sender
-sends many frequent small messages non-atomically. You can mitigate that by
-writing in batches to the queue.
+* I would like to expose some other useful primitives for build persistent
+systems.
 * I intend to make this an MPSC queue in the future.
 * There are probably unknown bugs hidden in some corner case. If you find
 one, please fill an issue in GitHub. Pull requests and contributions are

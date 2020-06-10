@@ -60,8 +60,8 @@ where
                     waker
                         .lock()
                         .expect("waker poisoned")
-                        .as_mut()
-                        .map(|waker: &mut Waker| waker.wake_by_ref());
+                        .take()
+                        .map(|waker: Waker| waker.wake());
                 }
                 _ => {}
             }
@@ -96,8 +96,8 @@ where
                     waker
                         .lock()
                         .expect("waker poisoned")
-                        .as_mut()
-                        .map(|waker: &mut Waker| waker.wake_by_ref());
+                        .take()
+                        .map(|waker: Waker| waker.wake());
                 }
                 Event {
                     kind: EventKind::Remove(_),
