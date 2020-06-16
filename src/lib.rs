@@ -147,6 +147,8 @@ mod watcher;
 #[cfg(feature = "recovery")]
 pub mod recovery;
 
+pub use sync::FileGuard;
+
 use std::fs::*;
 use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
@@ -154,7 +156,7 @@ use std::path::{Path, PathBuf};
 
 use state::FilePersistence;
 use state::QueueState;
-use sync::{FileGuard, TailFollower};
+use sync::{TailFollower};
 
 /// The name of segment file in the queue folder.
 fn segment_filename<P: AsRef<Path>>(base: P, segment: u64) -> PathBuf {
@@ -575,7 +577,7 @@ impl Drop for Receiver {
 /// during rollback, the state will be committed. If you *can* do something
 /// with the IO error, you may use `RecvGuard::rollback` explicitly to catch
 /// the error.  
-/// 
+///
 /// This struct implements `Deref` and `DerefMut`. If you really, really want
 /// ownership, there is `RecvGuard::into_inner`, but be careful, because you
 /// lose your chance to rollback if anything unexpected occurs.

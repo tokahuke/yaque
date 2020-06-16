@@ -21,7 +21,7 @@ fear your program may abort.
 * Solved a bug in `RecvGuard::into_inner`: it was rolling back instead of
 committing.
 
-## Version 0.3.2:
+## Version 0.3.2 (yanked):
 
 * Typo corrections.
 * Small improvements to docs.
@@ -29,3 +29,9 @@ committing.
 Guessing recv metadata is trickier and will be "coming soon".
 * Performance improvements to the `Receiver`: buffer input + less lock contention.
 This is _quite_ significant in terms of throughput. 
+
+## Version 0.3.3:
+
+* Solved a bug in `recovery::unlock`: the file was not being parse correctly.
+* `recovery::unlock` now ignores missing files, as it should.
+* Exposed `FileGuard`.

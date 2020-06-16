@@ -12,15 +12,26 @@ use sysinfo::*;
 use super::state::{FilePersistence, QueueState};
 use super::{recv_lock_filename, send_lock_filename, FileGuard};
 
-/// Unlocks a lock file if the owning process does not exist anymore.
+/// Unlocks a lock file if the owning process does not exist anymore. This
+/// function does nothing if the file does not exist.
+/// 
 /// # Panics
 ///
 /// This function panics if it cannot parse the lockfile.
 fn unlock<P: AsRef<Path>>(lock_filename: P) -> io::Result<()> {
-    let contents = read_to_string(&lock_filename)?;
-    let owner_pid = contents[4..]
+    let contents = match read_to_string(&lock_filename) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+
+    let owner_pid = &contents[4..]
+        .chars()
+        .take_while(|ch| ch.is_digit(10))
+        .collect::<String>()
         .parse::<sysinfo::Pid>()
         .expect("failed to parse recv lock file");
+
     let system = System::new_with_specifics(RefreshKind::new().with_processes());
 
     if system.get_processes().get(&owner_pid).is_some() {
@@ -81,9 +92,8 @@ pub fn unlock_queue<P: AsRef<Path>>(base: P) -> io::Result<()> {
 ///
 /// # Panics
 ///
-/// This function panics if
-/// 1. there is a file in the queue folder with extension `.q` whose name is
-/// not an integer, such as `foo.q`.
+/// This function panics if there is a file in the queue folder with extension
+/// `.q` whose name is not an integer, such as `foo.q`.
 pub fn guess_send_metadata<P: AsRef<Path>>(base: P) -> io::Result<()> {
     // Lock for sending:
     let lock = FileGuard::try_lock(send_lock_filename(base.as_ref()))?;
@@ -114,7 +124,7 @@ pub fn guess_send_metadata<P: AsRef<Path>>(base: P) -> io::Result<()> {
         position,
         ..QueueState::default()
     };
-    
+
     // And save:
     let mut persistence = FilePersistence::new();
     let _ = persistence.open_send(base.as_ref())?;
@@ -124,4 +134,35 @@ pub fn guess_send_metadata<P: AsRef<Path>>(base: P) -> io::Result<()> {
     drop(lock);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unlock() {
+        // Create a guard:
+        let guard = FileGuard::try_lock("data/test-unlock.lock").unwrap();
+        dbg!(std::process::id());
+
+        // "Forget" to drop it:
+        std::mem::forget(guard);
+
+        // Now, try to unlock:
+        assert_eq!(
+            io::ErrorKind::Other,
+            unlock("data/test-unlock.lock").unwrap_err().kind()
+        );
+
+        // Clean up:
+        remove_file("data/test-unlock.lock").unwrap();
+    }
+
+    #[test]
+    fn test_unlock_inexistent() {
+        unlock("data/inexistent-lock.lock").unwrap();
+    }
+
+    // TODO missing test for `guess_send_metadata`.
 }

@@ -11,8 +11,8 @@ use std::task::{Context, Poll, Waker};
 
 use crate::watcher::{file_removal_watcher, file_watcher};
 
-/// A lock using the atomicity of `OpenOptions::create_new`. Not exactly a good
-/// lock. You can easly delete it and everything goes down the drain.
+/// A lock using the atomicity of `OpenOptions::create_new`. Be careful! You can
+/// easily delete it and everything goes down the drain.
 pub struct FileGuard {
     path: PathBuf,
     ignore: bool,
