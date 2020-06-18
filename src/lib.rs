@@ -528,25 +528,30 @@ impl Receiver {
         })
     }
 
-    /// Tries to a number of elements from the queue. The returned value is a
-    /// guard that will only commit state changes to the queue when dropped.
+    /// Takes a number of elements from the queue until a certain asynchronous
+    /// condition is met. The returned value is a guard that will only commit
+    /// state changes to the queue when dropped.
     ///
     /// # Panics
     ///
     /// This function will panic if it has to start reading a new segment and
     /// it is not able to set up the notification handler to watch for file
     /// changes.
-    pub async fn recv_while<P: FnMut(&[u8]) -> bool>(
+    pub async fn recv_until<P, Fut>(
         &mut self,
         mut predicate: P,
-    ) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>> {
+    ) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>> 
+    where
+        P: FnMut(&[u8]) -> Fut,
+        Fut: std::future::Future<Output=bool>,
+    {
         let mut data = vec![];
 
-        // Poor man's do-while
+        // Poor man's do-while (aka. until)
         loop {
             let item = self.read_one().await?;
 
-            if predicate(&item) {
+            if !predicate(&item).await {
                 data.push(item);
             } else {
                 break;

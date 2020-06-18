@@ -35,3 +35,9 @@ This is _quite_ significant in terms of throughput.
 * Solved a bug in `recovery::unlock`: the file was not being parse correctly.
 * `recovery::unlock` now ignores missing files, as it should.
 * Exposed `FileGuard`.
+
+## Version 0.4.0:
+
+* Renamed `Receiver::take_while` to `Receiver::take_until` because that is what 
+it does. Also, now the supplied closure must return a future. This allows for,
+e.g., timers!
