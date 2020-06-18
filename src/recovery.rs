@@ -14,7 +14,7 @@ use super::{recv_lock_filename, send_lock_filename, FileGuard};
 
 /// Unlocks a lock file if the owning process does not exist anymore. This
 /// function does nothing if the file does not exist.
-/// 
+///
 /// # Panics
 ///
 /// This function panics if it cannot parse the lockfile.

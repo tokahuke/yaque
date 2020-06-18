@@ -156,7 +156,7 @@ use std::path::{Path, PathBuf};
 
 use state::FilePersistence;
 use state::QueueState;
-use sync::{TailFollower};
+use sync::TailFollower;
 
 /// The name of segment file in the queue folder.
 fn segment_filename<P: AsRef<Path>>(base: P, segment: u64) -> PathBuf {
@@ -529,7 +529,9 @@ impl Receiver {
     }
 
     /// Takes a number of elements from the queue until a certain asynchronous
-    /// condition is met. The returned value is a guard that will only commit
+    /// condition is met. You will receive a `None` as the first element so that
+    /// you may return early and leave the queue intact (this would not be
+    /// possible otherwise). The returned value is a guard that will only commit
     /// state changes to the queue when dropped.
     ///
     /// # Panics
@@ -540,18 +542,21 @@ impl Receiver {
     pub async fn recv_until<P, Fut>(
         &mut self,
         mut predicate: P,
-    ) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>> 
+    ) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>>
     where
-        P: FnMut(&[u8]) -> Fut,
-        Fut: std::future::Future<Output=bool>,
+        P: FnMut(Option<&[u8]>) -> Fut,
+        Fut: std::future::Future<Output = bool>,
     {
         let mut data = vec![];
+
+        // Prepare:
+        predicate(None).await;
 
         // Poor man's do-while (aka. until)
         loop {
             let item = self.read_one().await?;
 
-            if !predicate(&item).await {
+            if !predicate(Some(&item)).await {
                 data.push(item);
             } else {
                 break;
