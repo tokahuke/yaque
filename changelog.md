@@ -41,3 +41,9 @@ This is _quite_ significant in terms of throughput.
 * Renamed `Receiver::take_while` to `Receiver::take_until` because that is what 
 it does. Also, now the supplied closure must return a future. This allows for,
 e.g., timers!
+
+## Version 0.4.1:
+
+* `Receiver::recv` is now really atomic in an async context. Therefore, if you
+do not poll the future to completion, no changes will be made to the receiver
+state.
