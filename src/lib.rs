@@ -367,6 +367,7 @@ impl Drop for Sender {
 pub struct Receiver {
     _file_guard: FileGuard,
     tail_follower: TailFollower,
+    maybe_header: Option<[u8; 4]>,
     state: QueueState,
     base: PathBuf,
     persistence: FilePersistence,
@@ -408,6 +409,7 @@ impl Receiver {
         Ok(Receiver {
             _file_guard: file_guard,
             tail_follower,
+            maybe_header: None,
             state,
             base: PathBuf::from(base.as_ref()),
             persistence,
@@ -415,7 +417,7 @@ impl Receiver {
     }
 
     /// Maybe advance the segment of this receiver.
-    async fn advance(&mut self) -> io::Result<()> {
+    fn advance(&mut self) -> io::Result<()> {
         log::trace!(
             "advancing segment from {} to {}",
             self.state.segment,
@@ -443,23 +445,41 @@ impl Receiver {
         Ok(())
     }
 
-    /// Reads one element from the queue, inevitably advancing the file reader.
-    async fn read_one(&mut self) -> io::Result<Vec<u8>> {
-        // Read the header to get the length:
+    /// Reads the header. This operation is atomic.
+    async fn read_header(&mut self) -> io::Result<u32> {
+        // If the header was already read (by an incomplete operation), use it!
+        if let Some(header) = self.maybe_header {
+            return Ok(u32::from_be_bytes(header));
+        }
+
         let mut header = [0; 4];
         self.tail_follower.read_exact(&mut header).await?;
+        self.maybe_header = Some(header);
         let mut len = u32::from_be_bytes(header);
 
         // If the header is EOF, advance segment:
         if len == HEADER_EOF {
             log::trace!("got EOF header. Advancing...");
-            self.advance().await?;
+            self.advance()?;
 
             // Re-read the header:
             log::trace!("re-reading new header from new file");
             self.tail_follower.read_exact(&mut header).await?;
+            self.maybe_header = Some(header);
             len = u32::from_be_bytes(header);
         }
+
+        Ok(len)
+    }
+
+    /// Reads one element from the queue, inevitably advancing the file reader.
+    ///
+    /// This operation is atomic. If the returned future is not polled to
+    /// completion, as, e.g., when calling `select`, the operation will be
+    /// undone.
+    async fn read_one(&mut self) -> io::Result<Vec<u8>> {
+        // Get the length:
+        let len = self.read_header().await?;
 
         // With the length, read the data:
         let mut data = (0..len).map(|_| 0).collect::<Vec<_>>();
@@ -467,6 +487,9 @@ impl Receiver {
             .read_exact(&mut data)
             .await
             .expect("poisoned queue");
+
+        // We are done! Unset header:
+        self.maybe_header = None;
 
         Ok(data)
     }
@@ -489,6 +512,10 @@ impl Receiver {
     /// Tries to retrieve an element from the queue. The returned value is a
     /// guard that will only commit state changes to the queue when dropped.
     ///
+    /// This operation is atomic. If the returned future is not polled to
+    /// completion, as, e.g., when calling `select`, the operation will be
+    /// undone.
+    ///
     /// # Panics
     ///
     /// This function will panic if it has to start reading a new segment and
@@ -507,6 +534,13 @@ impl Receiver {
 
     /// Tries to remove a number of elements from the queue. The returned value
     /// is a guard that will only commit state changes to the queue when dropped.
+    ///
+    /// # Note
+    ///
+    /// This operation is not yet atomic in an asynchronous context. This means
+    /// that you will lose the elements if you do not await this function to
+    /// completion. This will change in the future. If you need this feature,
+    /// please file an issue in GitHub.
     ///
     /// # Panics
     ///
@@ -885,5 +919,34 @@ mod tests {
 
         enqueue.join().expect("enqueue thread panicked");
         dequeue.join().expect("dequeue thread panicked");
+    }
+
+    #[test]
+    fn test_dequeue_is_atomic() {
+        let _ = simple_logger::init_with_level(log::Level::Trace);
+        let mut sender = Sender::open("data/dequeue-is-atomic").unwrap();
+        let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
+
+        futures::executor::block_on(async move {
+            let mut receiver = Receiver::open("data/dequeue-is-atomic").unwrap();
+            let dataset_iter = dataset.iter();
+            let mut i = 0u64;
+
+            for data in dataset_iter {
+                sender.send(data).unwrap();
+                // Try not to poll the future to the end.
+                // TODO maybe you need something a bit more convincing than
+                // `async {}`...
+                let incomplete =
+                    futures::future::select(Box::pin(receiver.recv()), Box::pin(async {})).await;
+                drop(incomplete); // need to force this explicitly.
+
+                //
+                let received = receiver.recv().await.unwrap();
+                assert_eq!(&*received, data, "at sample {}", i);
+                i += 1;
+                received.commit();
+            }
+        });
     }
 }

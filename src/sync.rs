@@ -32,7 +32,7 @@ impl Drop for FileGuard {
 }
 
 impl FileGuard {
-    /// Igonres errors on the deletion of the guard.
+    /// Ignores errors on the deletion of the guard.
     pub(crate) fn ignore(&mut self) {
         self.ignore = true;
     }
@@ -74,7 +74,7 @@ impl<P: AsRef<Path>> Future for Lock<P> {
     type Output = io::Result<FileGuard>;
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         // Set the waker in the file watcher:
-        let mut lock = self.waker.lock().expect("waker mutex posoned");
+        let mut lock = self.waker.lock().expect("waker mutex poisoned");
         *lock = Some(context.waker().clone());
 
         match FileGuard::try_lock(self.path.as_ref()) {
@@ -85,9 +85,10 @@ impl<P: AsRef<Path>> Future for Lock<P> {
     }
 }
 
-/// Follows a file assynchronously. The file needs not to even to exist.
+/// Follows a file asynchronously. The file needs not to even to exist.
 pub struct TailFollower {
     file: io::BufReader<File>,
+    read_and_unused: usize,
     _watcher: RecommendedWatcher,
     waker: Arc<Mutex<Option<Waker>>>,
 }
@@ -106,6 +107,7 @@ impl TailFollower {
 
         TailFollower {
             file: io::BufReader::new(file),
+            read_and_unused: 0,
             _watcher: watcher,
             waker,
         }
@@ -136,14 +138,30 @@ impl TailFollower {
     }
 
     /// Tries to fill the supplied buffer asynchronously. Be careful, since
-    /// an EOF (or an interrupted) is considered as "pending". If no enough
+    /// an EOF (or an interrupted) is considered as "pending". If not enough
     /// data is written to the file, the future will never resolve.
+    ///
+    /// The returned future operation is _atomic_. If the future is not polled
+    /// to completion, the next invocation will rewind to the last position
+    /// and start over again.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if unable to seek while rewinding to recover
+    /// from an incomplete operation. This may change in the future.
     pub fn read_exact<'a>(&'a mut self, buffer: &'a mut [u8]) -> ReadExact<'a> {
+        // Rewind if last invocation was not polled to conclusion:
+        if self.read_and_unused != 0 {
+            self.seek(io::SeekFrom::Current(-(self.read_and_unused as i64)))
+                .expect("could not seek back read and unused bytes");
+            self.read_and_unused = 0;
+        }
+
         ReadExact {
             file: &mut self.file,
             buffer,
             waker: &self.waker,
-            filled: 0,
+            read_and_unused: &mut self.read_and_unused,
         }
     }
 }
@@ -175,17 +193,19 @@ pub struct ReadExact<'a> {
     file: &'a mut io::BufReader<File>,
     buffer: &'a mut [u8],
     waker: &'a Mutex<Option<Waker>>,
-    filled: usize,
+    read_and_unused: &'a mut usize,
 }
 
 impl<'a> ReadExact<'a> {
     fn read_until_you_drain(&mut self) -> Poll<io::Result<()>> {
         loop {
-            break match self.file.read(&mut self.buffer[self.filled..]) {
+            break match self.file.read(&mut self.buffer[*self.read_and_unused..]) {
                 Ok(0) => Poll::Pending,
                 Ok(i) => {
-                    self.filled += i;
-                    if self.filled == self.buffer.len() {
+                    *self.read_and_unused += i;
+                    if *self.read_and_unused == self.buffer.len() {
+                        // Now, it is read _and_ used.
+                        *self.read_and_unused = 0;
                         Poll::Ready(Ok(()))
                     } else {
                         continue;

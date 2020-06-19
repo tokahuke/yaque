@@ -51,7 +51,7 @@ impl QueueState {
     }
 }
 
-/// An implmementation of persistence using the filesystem itself.
+/// An implementation of persistence using the filesystem itself.
 #[derive(Default)]
 pub struct FilePersistence {
     path: Option<PathBuf>,
