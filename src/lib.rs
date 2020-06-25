@@ -210,7 +210,7 @@ async fn acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<FileGuard> {
 }
 
 /// The value of a header EOF.
-const HEADER_EOF: u32 = std::u32::MAX;
+const HEADER_EOF: [u8; 4] = [255, 255, 255, 255];
 
 /// The sender part of the queue. This part is lock-free and therefore can be
 /// used outside an asynchronous context.
@@ -295,7 +295,7 @@ impl Sender {
     /// Caps off a segment by writing an EOF header and then moves segment.
     fn cap_off_and_move(&mut self) -> io::Result<()> {
         // Write EOF header:
-        self.file.write(&HEADER_EOF.to_be_bytes())?;
+        self.file.write(&HEADER_EOF)?;
         self.file.flush()?;
 
         // Preserves the already allocated buffer:
@@ -452,22 +452,23 @@ impl Receiver {
             return Ok(u32::from_be_bytes(header));
         }
 
+        // Read header:
         let mut header = [0; 4];
         self.tail_follower.read_exact(&mut header).await?;
-        self.maybe_header = Some(header);
-        let mut len = u32::from_be_bytes(header);
 
         // If the header is EOF, advance segment:
-        if len == HEADER_EOF {
+        if header == HEADER_EOF {
             log::trace!("got EOF header. Advancing...");
             self.advance()?;
 
             // Re-read the header:
             log::trace!("re-reading new header from new file");
             self.tail_follower.read_exact(&mut header).await?;
-            self.maybe_header = Some(header);
-            len = u32::from_be_bytes(header);
         }
+
+        // Now, you set the header!
+        self.maybe_header = Some(header);
+        let len = u32::from_be_bytes(header);
 
         Ok(len)
     }

@@ -1,5 +1,8 @@
 {
     "cSpell.words": [
         "sysinfo"
+    ],
+    "cSpell.ignoreWords": [
+        "toctou"
     ]
 }

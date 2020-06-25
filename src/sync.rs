@@ -152,6 +152,7 @@ impl TailFollower {
     pub fn read_exact<'a>(&'a mut self, buffer: &'a mut [u8]) -> ReadExact<'a> {
         // Rewind if last invocation was not polled to conclusion:
         if self.read_and_unused != 0 {
+            log::trace!("found {} bytes read but unused", self.read_and_unused);
             self.seek(io::SeekFrom::Current(-(self.read_and_unused as i64)))
                 .expect("could not seek back read and unused bytes");
             self.read_and_unused = 0;
@@ -162,6 +163,7 @@ impl TailFollower {
             buffer,
             waker: &self.waker,
             read_and_unused: &mut self.read_and_unused,
+            was_polled: false,
         }
     }
 }
@@ -194,25 +196,39 @@ pub struct ReadExact<'a> {
     buffer: &'a mut [u8],
     waker: &'a Mutex<Option<Waker>>,
     read_and_unused: &'a mut usize,
+    was_polled: bool,
 }
 
 impl<'a> ReadExact<'a> {
     fn read_until_you_drain(&mut self) -> Poll<io::Result<()>> {
+        log::trace!("reading until drained");
         loop {
             break match self.file.read(&mut self.buffer[*self.read_and_unused..]) {
-                Ok(0) => Poll::Pending,
+                Ok(0) => {
+                    log::trace!("will have to wait for more");
+                    Poll::Pending
+                },
                 Ok(i) => {
+                    log::trace!("read {} bytes", i);
                     *self.read_and_unused += i;
                     if *self.read_and_unused == self.buffer.len() {
+                        log::trace!("enough! Done reading");
                         // Now, it is read _and_ used.
                         *self.read_and_unused = 0;
                         Poll::Ready(Ok(()))
                     } else {
+                        log::trace!("can read more");
                         continue;
                     }
                 }
-                Err(err) if err.kind() == io::ErrorKind::Interrupted => Poll::Pending,
-                Err(err) => Poll::Ready(Err(err)),
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {
+                    log::trace!("got interrupted by eof");
+                    Poll::Pending
+                },
+                Err(err) => {
+                    log::trace!("oops! error");
+                    Poll::Ready(Err(err))
+                }
             };
         }
     }
@@ -221,7 +237,8 @@ impl<'a> ReadExact<'a> {
 impl<'a> Future for ReadExact<'a> {
     type Output = io::Result<()>;
     fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        // Now see what happens when we read.
+        self.was_polled = true;
+        // See what happens when we read.
         let outcome = self.read_until_you_drain();
 
         if outcome.is_pending() {
@@ -229,9 +246,18 @@ impl<'a> Future for ReadExact<'a> {
             let mut lock = self.waker.lock().expect("waker mutex poisoned");
             *lock = Some(context.waker().clone());
 
+            // Now, you will have to recheck (TOCTOU!)
             self.read_until_you_drain()
         } else {
             outcome
+        }
+    }
+}
+
+impl<'a> Drop for ReadExact<'a> {
+    fn drop(&mut self) {
+        if !self.was_polled {
+            log::warn!("read_exact future never polled");
         }
     }
 }
