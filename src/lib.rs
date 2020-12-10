@@ -732,6 +732,24 @@ pub async fn clear<P: AsRef<Path>>(base: P) -> io::Result<()> {
     Ok(())
 }
 
+
+
+/// Global initialization for tests
+#[cfg(test)]
+#[ctor::ctor]
+fn init_log() {
+    // Init logger:
+    #[cfg(feature = "log-trace")]
+    simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Trace).init().ok();
+
+    #[cfg(feature = "log-debug")]
+    simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Debug).init().ok();
+
+    // Remove an old test:
+    std::fs::remove_dir_all("data").ok();
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,7 +768,6 @@ mod tests {
 
     #[test]
     fn create_and_clear() {
-        let _ = simple_logger::init_with_level(log::Level::Trace);
         let _ = Sender::open("data/create-and-clear").unwrap();
         try_clear("data/create-and-clear").unwrap();
     }
@@ -758,7 +775,6 @@ mod tests {
     #[test]
     #[should_panic]
     fn create_and_clear_fails() {
-        let _ = simple_logger::init_with_level(log::Level::Trace);
         let sender = Sender::open("data/create-and-clear-fails").unwrap();
         try_clear("data/create-and-clear-fails").unwrap();
         drop(sender);
@@ -766,7 +782,6 @@ mod tests {
 
     #[test]
     fn create_and_clear_async() {
-        let _ = simple_logger::init_with_level(log::Level::Trace);
         let _ = Sender::open("data/create-and-clear-async").unwrap();
 
         futures::executor::block_on(async { clear("data/create-and-clear-async").await.unwrap() });
@@ -774,7 +789,6 @@ mod tests {
 
     #[test]
     fn test_enqueue() {
-        let _ = simple_logger::init_with_level(log::Level::Trace);
         let mut sender = Sender::open("data/enqueue").unwrap();
         for data in data_lots_of_data().take(100_000) {
             sender.send(&data).unwrap();
@@ -784,8 +798,6 @@ mod tests {
     /// Test enqueuing everything and then dequeueing everything, with no persistence.
     #[test]
     fn test_enqueue_then_dequeue() {
-        let _ = simple_logger::init_with_level(log::Level::Trace);
-
         // Enqueue:
         let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
         let mut sender = Sender::open("data/enqueue-then-dequeue").unwrap();
@@ -813,8 +825,6 @@ mod tests {
     /// Test enqueuing and dequeueing, round robin, with no persistence.
     #[test]
     fn test_enqueue_and_dequeue() {
-        let _ = simple_logger::init_with_level(log::Level::Trace);
-
         // Enqueue:
         let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
         let mut sender = Sender::open("data/enqueue-and-dequeue").unwrap();
@@ -837,8 +847,6 @@ mod tests {
     /// Test enqueuing and dequeueing in parallel.
     #[test]
     fn test_enqueue_dequeue_parallel() {
-        let _ = simple_logger::init_with_level(log::Level::Trace);
-
         // Generate data:
         let dataset = data_lots_of_data().take(1_000_000).collect::<Vec<_>>();
         let arc_sender = Arc::new(dataset);
@@ -875,13 +883,11 @@ mod tests {
     /// Test enqueuing and dequeueing in parallel, using batches.
     #[test]
     fn test_enqueue_dequeue_parallel_with_batches() {
-        let _ = simple_logger::init_with_level(log::Level::Trace);
-
         // Generate data:
         let mut dataset = vec![];
         let mut batch = vec![];
 
-        for data in data_lots_of_data().take(10_000_000) {
+        for data in data_lots_of_data().take(100_000) {
             batch.push(data);
 
             if batch.len() >= 256 {
@@ -924,7 +930,6 @@ mod tests {
 
     #[test]
     fn test_dequeue_is_atomic() {
-        let _ = simple_logger::init_with_level(log::Level::Trace);
         let mut sender = Sender::open("data/dequeue-is-atomic").unwrap();
         let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
 
