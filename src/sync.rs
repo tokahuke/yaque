@@ -207,7 +207,7 @@ impl<'a> ReadExact<'a> {
                 Ok(0) => {
                     log::trace!("will have to wait for more");
                     Poll::Pending
-                },
+                }
                 Ok(i) => {
                     log::trace!("read {} bytes", i);
                     *self.read_and_unused += i;
@@ -224,7 +224,7 @@ impl<'a> ReadExact<'a> {
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {
                     log::trace!("got interrupted by eof");
                     Poll::Pending
-                },
+                }
                 Err(err) => {
                     log::trace!("oops! error");
                     Poll::Ready(Err(err))

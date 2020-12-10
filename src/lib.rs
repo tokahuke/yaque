@@ -732,23 +732,26 @@ pub async fn clear<P: AsRef<Path>>(base: P) -> io::Result<()> {
     Ok(())
 }
 
-
-
 /// Global initialization for tests
 #[cfg(test)]
 #[ctor::ctor]
 fn init_log() {
     // Init logger:
     #[cfg(feature = "log-trace")]
-    simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Trace).init().ok();
+    simple_logger::SimpleLogger::new()
+        .with_level(log::LevelFilter::Trace)
+        .init()
+        .ok();
 
     #[cfg(feature = "log-debug")]
-    simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Debug).init().ok();
+    simple_logger::SimpleLogger::new()
+        .with_level(log::LevelFilter::Debug)
+        .init()
+        .ok();
 
     // Remove an old test:
     std::fs::remove_dir_all("data").ok();
 }
-
 
 #[cfg(test)]
 mod tests {
