@@ -47,3 +47,11 @@ e.g., timers!
 * `Receiver::recv` is now really atomic in an async context. Therefore, if you
 do not poll the future to completion, no changes will be made to the receiver
 state.
+
+## Version 0.4.2:
+
+* Small improvements to docs.
+* Unittests will perform correctly after a previous run was interrupted by 
+CTRL+C.
+* Created the `recovery::recover` function for a "full course" queue recover in
+a single command.

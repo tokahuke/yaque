@@ -131,6 +131,17 @@ you favorite timer implementation and set a simple periodical task up every
 hundreds of milliseconds. However, be warned that this is only a _mitigation_
 of consistency problems, not a solution. 
 
+## Testing 
+
+Testing is done using `cargo test`, as usual. However, since `exttern crate test`
+is not yet stable, some test are "informal benchmarks". As such, very 
+detailed logging becomes a performance. Therefore, we expose two testing 
+features for logging:
+
+* `log-trace` (the default): runs unittests using the "trace" log level.
+* `log-debug`: runs unittests using the "debug" log level. This is recommended
+for benchmarking.
+
 ## Known issues and next steps
 
 * This is a brand new project. Although I have tested it and it will
