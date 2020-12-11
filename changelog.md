@@ -48,7 +48,7 @@ e.g., timers!
 do not poll the future to completion, no changes will be made to the receiver
 state.
 
-## Version 0.4.2:
+## Version 0.4.3:
 
 * Small improvements to docs.
 * Unittests will perform correctly after a previous run was interrupted by 
