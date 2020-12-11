@@ -139,11 +139,11 @@ pub fn guess_send_metadata<P: AsRef<Path>>(base: P) -> io::Result<()> {
 /// Recovers a queue, appliying the following operations, in this order:
 /// * Unlocks both the sender and receiver side of the queue.
 /// * Guesses the position of the sender using [`guess_send_metadata`].
-/// 
+///
 /// # Panics
-/// 
+///
 /// This function panics if there is a file in the queue folder with extension
-/// `.q` whose name is not an integer, such as `foo.q` or if the lockfiles for 
+/// `.q` whose name is not an integer, such as `foo.q` or if the lockfiles for
 /// either sending or receiving cannot be parsed.
 pub fn recover<P: AsRef<Path>>(base: P) -> io::Result<()> {
     unlock_queue(base.as_ref())?;

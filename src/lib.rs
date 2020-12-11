@@ -271,7 +271,7 @@ impl Sender {
     ///
     /// 2. Handle possible IO errors in sending. The `drop` implementation will
     /// ignore (but log) any io errors, which may lead to data loss in an
-    /// unreliable filesystem. It was implmemented this way because no errors 
+    /// unreliable filesystem. It was implmemented this way because no errors
     /// are allowed to propagate on drop and panicking will abort the program if
     /// drop is called during a panic.
     pub fn save(&mut self) -> io::Result<()> {
@@ -503,8 +503,8 @@ impl Receiver {
     ///
     /// 2. Handle possible IO errors in logging the state of the queue to the disk
     /// after commit. The `drop` implementation will ignore (but log) any io
-    /// errors, which may lead to data loss in an unreliable filesystem. It was 
-    /// implemented this way because no errors are allowed to propagate on drop 
+    /// errors, which may lead to data loss in an unreliable filesystem. It was
+    /// implemented this way because no errors are allowed to propagate on drop
     /// and panicking will abort the program if drop is called during a panic.
     pub fn save(&mut self) -> io::Result<()> {
         self.persistence.save(&self.state)
@@ -564,21 +564,21 @@ impl Receiver {
     }
 
     /// Takes a number of elements from the queue until a certain asynchronous
-    /// condition is met. Use this function if you want to have fine-grained 
-    /// control over the contents of the receive guard. 
-    /// 
+    /// condition is met. Use this function if you want to have fine-grained
+    /// control over the contents of the receive guard.
+    ///
     /// Note that the predicate function will receive a `None` as the first
     /// element. This allows you to return early and leave the queue intact.
     /// The returned value is a guard that will only commit state changes to
     /// the queue when dropped.
     ///
     /// # Example
-    /// 
+    ///
     /// Receive until an empty element is received:
     /// ```rust
     /// let recv_guard = receiver.recv_until(|element| async { element.is_empty() });
     /// ```
-    /// 
+    ///
     /// # Panics
     ///
     /// This function will panic if it has to start reading a new segment and
