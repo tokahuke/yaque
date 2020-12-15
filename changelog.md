@@ -56,7 +56,7 @@ CTRL+C.
 * Created the `recovery::recover` function for a "full course" queue recover in
 a single command.
 
-## Version 0.5.0-pre1:
+## Version 0.5.0-pre2:
 
 * `recv_timeout` and `recv_batch_timeout` to allow receiving with timeout.
 * `recv_batch` is "atomic in an assynchronous context".

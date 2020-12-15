@@ -831,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "yaque"
-version = "0.5.0-pre1"
+version = "0.5.0-pre2"
 dependencies = [
  "ctor",
  "futures",
