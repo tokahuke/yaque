@@ -149,13 +149,13 @@ pub mod recovery;
 
 pub use sync::FileGuard;
 
+use futures::future;
 use std::collections::VecDeque;
 use std::fs::*;
+use std::future::Future;
 use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use futures::future;
-use std::future::Future;
 
 use state::FilePersistence;
 use state::QueueState;
@@ -505,7 +505,7 @@ impl Receiver {
         Ok(())
     }
 
-    async fn read_one_timeout<F>(&mut self, timeout: F) -> io::Result<bool> 
+    async fn read_one_timeout<F>(&mut self, timeout: F) -> io::Result<bool>
     where
         F: Future<Output = ()> + Unpin,
     {
@@ -513,6 +513,26 @@ impl Receiver {
             future::Either::Left((read_one, _)) => read_one.map(|_| true),
             future::Either::Right((_, _)) => Ok(false),
         }
+    }
+
+    /// Drains `n` elements from the "read and unused" queue into a vector. This
+    /// operation is "atomic in an async context", since it is not `async`.
+    fn drain(&mut self, n: usize) -> Vec<Vec<u8>> {
+        let mut data = Vec::with_capacity(n);
+
+        // (careful! need to check if read something to avoid an eroneous POP 
+        // from the queue)
+        if n > 0 {
+            while let Some(element) = self.read_and_unused.pop_front() {
+                data.push(element);
+
+                if data.len() == n {
+                    break;
+                }
+            }
+        }
+
+        data
     }
 
     /// Saves the receiver queue state. You do not need to use method in most
@@ -560,6 +580,33 @@ impl Receiver {
         })
     }
 
+    pub async fn recv_timeout<F>(
+        &mut self,
+        timeout: F,
+    ) -> io::Result<Option<RecvGuard<'_, Vec<u8>>>>
+    where
+        F: Future<Output = ()> + Unpin,
+    {
+        let data = if let Some(data) = self.read_and_unused.pop_front() {
+            data
+        } else {
+            if self.read_one_timeout(timeout).await? {
+                self.read_and_unused
+                    .pop_front()
+                    .expect("guaranteed to yield an element")
+            } else {
+                return Ok(None);
+            }
+        };
+
+        Ok(Some(RecvGuard {
+            receiver: self,
+            len: 4 + data.len(),
+            item: Some(data),
+            override_drop: false,
+        }))
+    }
+
     /// Tries to remove a number of elements from the queue. The returned value
     /// is a guard that will only commit state changes to the queue when dropped.
     ///
@@ -575,8 +622,6 @@ impl Receiver {
     /// it is not able to set up the notification handler to watch for file
     /// changes.
     pub async fn recv_batch(&mut self, n: usize) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>> {
-        let mut data = Vec::with_capacity(n);
-
         // First, fetch what is missing from the disk:
         if n > self.read_and_unused.len() {
             for _ in 0..(n - self.read_and_unused.len()) {
@@ -584,19 +629,40 @@ impl Receiver {
             }
         }
 
-        // And now, drain! (careful! need to check if read something to avoid
-        // an eroneous POP from the queue)
-        if n > 0 {
-            while let Some(element) = self.read_and_unused.pop_front() {
-                data.push(element);
+        // And now, drain!
+        let data = self.drain(n);
 
-                // This is useless, since we know `read_and_unused` is the same
-                // size of `data`, but hey! I take no chances of being wrong!
-                if data.len() == n {
+        Ok(RecvGuard {
+            receiver: self,
+            len: data.iter().map(|item| 4 + item.len()).sum(),
+            item: Some(data),
+            override_drop: false,
+        })
+    }
+
+    pub async fn recv_batch_timeout<F>(
+        &mut self,
+        n: usize,
+        mut timeout: F,
+    ) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>>
+    where
+        F: Future<Output = ()> + Unpin,
+    {
+        let mut n_read = 0;
+
+        // First, fetch what is missing from the disk:
+        if n > self.read_and_unused.len() {
+            for _ in 0..(n - self.read_and_unused.len()) {
+                if !self.read_one_timeout(&mut timeout).await? {
                     break;
+                } else {
+                    n_read += 1;
                 }
             }
         }
+
+        // And now, drain!
+        let data = self.drain(n_read);
 
         Ok(RecvGuard {
             receiver: self,
@@ -641,7 +707,6 @@ impl Receiver {
         P: FnMut(Option<&[u8]>) -> Fut,
         Fut: std::future::Future<Output = bool>,
     {
-        let mut data = vec![];
         let mut n_read = 0;
 
         // Prepare:
@@ -663,21 +728,10 @@ impl Receiver {
             }
         }
 
-        // And now, drain! (careful! need to check if read something to avoid
-        // an eroneous POP from the queue)
-        if n_read > 0 {
-            while let Some(element) = self.read_and_unused.pop_front() {
-                data.push(element);
-
-                // This is useless, since we know `read_and_unused` is the same
-                // size of `data`, but hey! I take no chances of being wrong!
-                if data.len() == n_read {
-                    break;
-                }
-            }
-        }
-
+        // And now, drain!
+        let data = self.drain(n_read);
         Ok(RecvGuard {
+
             receiver: self,
             len: data.iter().map(|item| 4 + item.len()).sum(),
             item: Some(data),
@@ -715,6 +769,7 @@ pub struct RecvGuard<'a, T> {
 impl<'a, T> Drop for RecvGuard<'a, T> {
     fn drop(&mut self) {
         if self.override_drop {
+            // do nothing!
         } else {
             if let Err(err) = self
                 .receiver
