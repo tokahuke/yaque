@@ -831,11 +831,12 @@ dependencies = [
 
 [[package]]
 name = "yaque"
-version = "0.4.3"
+version = "0.5.0-pre2"
 dependencies = [
  "ctor",
  "futures",
  "futures-timer",
+ "lazy_static",
  "log",
  "notify",
  "rand",

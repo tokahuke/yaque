@@ -1,6 +1,8 @@
 //! Synchronization structures based on the filesystem.
 
+use lazy_static::lazy_static;
 use notify::RecommendedWatcher;
+use rand::Rng;
 use std::fs::*;
 use std::future::Future;
 use std::io::{self, Read, Seek, Write};
@@ -10,6 +12,18 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
 use crate::watcher::{file_removal_watcher, file_watcher};
+
+lazy_static! {
+    static ref UNIQUE_PROCESS_TOKEN: u64 = rand::thread_rng().gen();
+}
+
+pub fn render_lock() -> String {
+    format!(
+        "pid={}\ntoken={}",
+        std::process::id(),
+        *UNIQUE_PROCESS_TOKEN
+    )
+}
 
 /// A lock using the atomicity of `OpenOptions::create_new`. Be careful! You can
 /// easily delete it and everything goes down the drain.
@@ -42,7 +56,7 @@ impl FileGuard {
     pub fn try_lock<P: AsRef<Path>>(path: P) -> io::Result<Option<FileGuard>> {
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut file) => {
-                writeln!(file, "pid={}", std::process::id())?;
+                writeln!(file, "{}", render_lock())?;
                 Ok(Some(FileGuard {
                     path: path.as_ref().to_path_buf(),
                     ignore: false,
