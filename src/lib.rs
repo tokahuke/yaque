@@ -480,14 +480,14 @@ impl Receiver {
         Ok(len)
     }
 
-    /// Reads one element from the queue, inevitably advancing the file reader. 
+    /// Reads one element from the queue, inevitably advancing the file reader.
     /// Instead of returning the element, this function puts it in the "read and
-    /// unused" queue to be used later. This enables us to construct "atomic in 
+    /// unused" queue to be used later. This enables us to construct "atomic in
     /// async context" guarantees for the higher level functions. The ideia is to
     /// _drain the queue_ only after the last `.await` in the block.
     ///
     /// This operation is also itlsef atomic. If the returned future is not
-    /// polled to completion, as, e.g., when calling `select`, the operation 
+    /// polled to completion, as, e.g., when calling `select`, the operation
     /// will count as not done.
     async fn read_one(&mut self) -> io::Result<()> {
         // Get the length:
@@ -510,7 +510,7 @@ impl Receiver {
     }
 
     /// Reads one element from the queue until a future elapses. If the future
-    /// elapses first, then `OK(false)` is returned and no element is put in 
+    /// elapses first, then `OK(false)` is returned and no element is put in
     /// the "read and unused" internal queue. Otherwise, `Ok(true)` is returned
     /// and exactly one element is put in the "read and unused" queue.
     ///
@@ -529,7 +529,7 @@ impl Receiver {
 
     /// Drains `n` elements from the "read and unused" queue into a vector. This
     /// operation is "atomic in an async context", since it is not `async`. For a
-    /// function to enjoy the same guarantee, this function must only be called 
+    /// function to enjoy the same guarantee, this function must only be called
     /// after the last `.await` in the caller's control flow.
     fn drain(&mut self, n: usize) -> Vec<Vec<u8>> {
         let mut data = Vec::with_capacity(n);
@@ -594,11 +594,11 @@ impl Receiver {
         })
     }
 
-    /// Tries to retrieve an element from the queue until a given future 
-    /// finishes. If an element arrives first, he returned value is a guard 
-    /// that will only commit state changes to the queue when dropped. 
+    /// Tries to retrieve an element from the queue until a given future
+    /// finishes. If an element arrives first, he returned value is a guard
+    /// that will only commit state changes to the queue when dropped.
     /// Otherwise, `Ok(None)` is returned.
-    /// 
+    ///
     /// This operation is atomic. If the returned future is not polled to
     /// completion, as, e.g., when calling `select`, the operation will be
     /// undone.
@@ -671,7 +671,7 @@ impl Receiver {
     /// Tries to remove a number of elements from the queue until a given future
     ///  finished. The values taken from the queue will be the values that were
     /// available durng the whole execution of the future and thus less than `n`
-    /// elements might be returned. The returned items are wrapped in a guard 
+    /// elements might be returned. The returned items are wrapped in a guard
     /// that will only commit state changes to the queue when dropped.
     ///
     /// # Note
@@ -937,9 +937,11 @@ fn init_log() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_timer::Delay;
     use rand::{Rng, SeedableRng};
     use rand_xorshift::XorShiftRng;
     use std::sync::Arc;
+    use std::time::Duration;
 
     fn data_lots_of_data() -> impl Iterator<Item = Vec<u8>> {
         let mut rng = XorShiftRng::from_rng(rand::thread_rng()).expect("can init");
@@ -1154,6 +1156,144 @@ mod tests {
 
             assert_eq!(&*receiver.recv().await.unwrap(), b"456");
             assert_eq!(&*receiver.recv().await.unwrap(), b"456");
+        });
+    }
+
+    #[test]
+    fn test_recv_timeout_nothing() {
+        futures::executor::block_on(async move {
+            let (_, mut receiver) = channel("data/recv-timeout-nothing").unwrap();
+
+            assert!(
+                receiver
+                    .recv_timeout(Delay::new(Duration::from_secs(1)))
+                    .await
+                    .unwrap()
+                    .is_none(),
+            );
+        });
+    }
+
+    #[test]
+    fn test_recv_timeout_immediate() {
+        futures::executor::block_on(async move {
+            let (mut sender, mut receiver) = channel("data/recv-timeout-immediate").unwrap();
+
+            sender.send(b"123").unwrap();
+            // sender.send(b"456").unwrap();
+
+            assert_eq!(
+                &*receiver
+                    .recv_timeout(Delay::new(Duration::from_secs(1)))
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                b"123"
+            );
+        });
+    }
+
+    #[test]
+    fn test_recv_timeout_dealyed() {
+        futures::executor::block_on(async move {
+            let (mut sender, mut receiver) = channel("data/recv-timeout-delayed").unwrap();
+
+            std::thread::spawn(move || {
+                futures::executor::block_on(async move {
+                    Delay::new(Duration::from_secs(1)).await;
+                    sender.send(b"123").unwrap();
+                });
+            });
+
+            assert_eq!(
+                &*receiver
+                    .recv_timeout(Delay::new(Duration::from_secs(2)))
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                b"123"
+            );
+        });
+    }
+
+    #[test]
+    fn test_recv_batch_timeout_nothing() {
+        futures::executor::block_on(async move {
+            let (_, mut receiver) = channel("data/recv-batch-timeout-nothing").unwrap();
+
+            assert!(
+                receiver
+                    .recv_batch_timeout(2, Delay::new(Duration::from_secs(1)))
+                    .await
+                    .unwrap()
+                    .is_empty(),
+            );
+        });
+    }
+
+    #[test]
+    fn test_recv_batch_timeout_immediate() {
+        futures::executor::block_on(async move {
+            let (mut sender, mut receiver) = channel("data/recv-batch-timeout-immediate").unwrap();
+
+            sender.send(b"123").unwrap();
+            sender.send(b"456").unwrap();
+
+            assert_eq!(
+                &*receiver
+                    .recv_batch_timeout(2, Delay::new(Duration::from_secs(1)))
+                    .await
+                    .unwrap(),
+                &[b"123", b"456"], 
+            );
+        });
+    }
+
+    #[test]
+    fn test_recv_batch_timeout_dealyed_1() {
+        futures::executor::block_on(async move {
+            let (mut sender, mut receiver) = channel("data/recv-batch-timeout-delayed-1").unwrap();
+
+            std::thread::spawn(move || {
+                futures::executor::block_on(async move {
+                    for i in 0..5usize {
+                        Delay::new(Duration::from_secs_f64(0.5)).await;
+                        sender.send(i.to_string().as_bytes()).unwrap();
+                    }
+                });
+            });
+
+            assert_eq!(
+                &*receiver
+                    .recv_batch_timeout(3, Delay::new(Duration::from_secs(2)))
+                    .await
+                    .unwrap(),
+                &[b"0", b"1", b"2"]
+            );
+        });
+    }
+
+    #[test]
+    fn test_recv_batch_timeout_dealyed_2() {
+        futures::executor::block_on(async move {
+            let (mut sender, mut receiver) = channel("data/recv-batch-timeout-delayed-2").unwrap();
+
+            std::thread::spawn(move || {
+                futures::executor::block_on(async move {
+                    for i in 0..5usize {
+                        Delay::new(Duration::from_secs_f64(0.6)).await;
+                        sender.send(i.to_string().as_bytes()).unwrap();
+                    }
+                });
+            });
+
+            assert_eq!(
+                &*receiver
+                    .recv_batch_timeout(5, Delay::new(Duration::from_secs(2)))
+                    .await
+                    .unwrap(),
+                &[b"0", b"1", b"2"]
+            );
         });
     }
 }

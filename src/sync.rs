@@ -14,6 +14,8 @@ use std::task::{Context, Poll, Waker};
 use crate::watcher::{file_removal_watcher, file_watcher};
 
 lazy_static! {
+    /// A unique token to differentiate between processes wich might have the
+    /// same PID, but are otherwise differente instances.
     pub(crate) static ref UNIQUE_PROCESS_TOKEN: u64 = rand::thread_rng().gen();
 }
 
