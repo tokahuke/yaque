@@ -154,6 +154,8 @@ use std::fs::*;
 use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use futures::future;
+use std::future::Future;
 
 use state::FilePersistence;
 use state::QueueState;
@@ -501,6 +503,16 @@ impl Receiver {
         self.read_and_unused.push_back(data);
 
         Ok(())
+    }
+
+    async fn read_one_timeout<F>(&mut self, timeout: F) -> io::Result<bool> 
+    where
+        F: Future<Output = ()> + Unpin,
+    {
+        match future::select(Box::pin(self.read_one()), timeout).await {
+            future::Either::Left((read_one, _)) => read_one.map(|_| true),
+            future::Either::Right((_, _)) => Ok(false),
+        }
     }
 
     /// Saves the receiver queue state. You do not need to use method in most

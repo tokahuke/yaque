@@ -149,6 +149,7 @@ impl TailFollower {
     ///
     /// This function will panic if unable to seek while rewinding to recover
     /// from an incomplete operation. This may change in the future.
+    #[must_use]
     pub fn read_exact<'a>(&'a mut self, buffer: &'a mut [u8]) -> ReadExact<'a> {
         // Rewind if last invocation was not polled to conclusion:
         if self.read_and_unused != 0 {

@@ -18,13 +18,14 @@ log-trace = []  # test only
 log-debug = []  # test only
 
 [dependencies]
-notify = "5.0.0-pre.2"
+notify = "5.0.0-pre.4"
 log = "^0.4"
 sysinfo = { version = "0.14.5", optional = true }
+futures = "0.3"
 
 [dev-dependencies]
 rand = "0.7.3"
 rand_xorshift = "0.2.0"
-futures = "0.3.5"
 simple_logger = "1.11.0"
 ctor = "0.1.16"
+futures-timer = "3.0"

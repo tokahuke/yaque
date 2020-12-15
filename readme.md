@@ -85,7 +85,7 @@ You can use the `yaque` queue to send and receive batches of data ,
 too. The guarantees are the same as with single reads and writes, except
 that you may save on OS overhead when you send items, since only one disk
 operation is made. See `Sender::send_batch`, `Receiver::recv_batch` and
-`Receiver::recv_while` for more information on receiver batches.
+`Receiver::recv_until` for more information on receiver batches.
 
 ## `Ctrl+C` and other unexpected events
 
