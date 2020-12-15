@@ -1164,13 +1164,11 @@ mod tests {
         futures::executor::block_on(async move {
             let (_, mut receiver) = channel("data/recv-timeout-nothing").unwrap();
 
-            assert!(
-                receiver
-                    .recv_timeout(Delay::new(Duration::from_secs(1)))
-                    .await
-                    .unwrap()
-                    .is_none(),
-            );
+            assert!(receiver
+                .recv_timeout(Delay::new(Duration::from_secs(1)))
+                .await
+                .unwrap()
+                .is_none(),);
         });
     }
 
@@ -1221,13 +1219,11 @@ mod tests {
         futures::executor::block_on(async move {
             let (_, mut receiver) = channel("data/recv-batch-timeout-nothing").unwrap();
 
-            assert!(
-                receiver
-                    .recv_batch_timeout(2, Delay::new(Duration::from_secs(1)))
-                    .await
-                    .unwrap()
-                    .is_empty(),
-            );
+            assert!(receiver
+                .recv_batch_timeout(2, Delay::new(Duration::from_secs(1)))
+                .await
+                .unwrap()
+                .is_empty(),);
         });
     }
 
@@ -1244,7 +1240,7 @@ mod tests {
                     .recv_batch_timeout(2, Delay::new(Duration::from_secs(1)))
                     .await
                     .unwrap(),
-                &[b"123", b"456"], 
+                &[b"123", b"456"],
             );
         });
     }
