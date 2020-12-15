@@ -10,8 +10,8 @@ use std::path::Path;
 use sysinfo::*;
 
 use super::state::{FilePersistence, QueueState};
-use super::{recv_lock_filename, send_lock_filename, FileGuard};
 use super::sync::render_lock;
+use super::{recv_lock_filename, send_lock_filename, FileGuard};
 
 /// Unlocks a lock file if the owning process does not exist anymore. This
 /// function does nothing if the file does not exist.
@@ -32,7 +32,7 @@ fn unlock<P: AsRef<Path>>(lock_filename: P) -> io::Result<()> {
         .collect::<String>()
         .parse::<sysinfo::Pid>()
         .expect("failed to parse recv lock file");
-    // The rendered lock makes sure that we can unlock even if we have a diferent 
+    // The rendered lock makes sure that we can unlock even if we have a diferent
     // process with the same PID.
     let rendered_lock = render_lock();
 

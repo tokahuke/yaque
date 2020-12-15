@@ -149,13 +149,13 @@ pub mod recovery;
 
 pub use sync::FileGuard;
 
+use futures::future;
 use std::collections::VecDeque;
 use std::fs::*;
+use std::future::Future;
 use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use futures::future;
-use std::future::Future;
 
 use state::FilePersistence;
 use state::QueueState;
@@ -505,7 +505,7 @@ impl Receiver {
         Ok(())
     }
 
-    async fn read_one_timeout<F>(&mut self, timeout: F) -> io::Result<bool> 
+    async fn read_one_timeout<F>(&mut self, timeout: F) -> io::Result<bool>
     where
         F: Future<Output = ()> + Unpin,
     {

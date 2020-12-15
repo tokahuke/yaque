@@ -1,6 +1,8 @@
 //! Synchronization structures based on the filesystem.
 
+use lazy_static::lazy_static;
 use notify::RecommendedWatcher;
+use rand::Rng;
 use std::fs::*;
 use std::future::Future;
 use std::io::{self, Read, Seek, Write};
@@ -8,8 +10,6 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
-use lazy_static::lazy_static;
-use rand::Rng;
 
 use crate::watcher::{file_removal_watcher, file_watcher};
 
@@ -18,7 +18,11 @@ lazy_static! {
 }
 
 pub fn render_lock() -> String {
-    format!("pid={}\ntoken={}", std::process::id(), *UNIQUE_PROCESS_TOKEN)
+    format!(
+        "pid={}\ntoken={}",
+        std::process::id(),
+        *UNIQUE_PROCESS_TOKEN
+    )
 }
 
 /// A lock using the atomicity of `OpenOptions::create_new`. Be careful! You can
