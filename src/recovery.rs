@@ -10,7 +10,7 @@ use std::path::Path;
 use sysinfo::*;
 
 use super::state::{FilePersistence, QueueState};
-use super::sync::render_lock;
+use super::sync::UNIQUE_PROCESS_TOKEN;
 use super::{recv_lock_filename, send_lock_filename, FileGuard};
 
 /// Unlocks a lock file if the owning process does not exist anymore. This
@@ -26,30 +26,57 @@ fn unlock<P: AsRef<Path>>(lock_filename: P) -> io::Result<()> {
         Err(err) => return Err(err),
     };
 
-    let owner_pid = &contents[4..]
-        .chars()
-        .take_while(|ch| ch.is_digit(10))
-        .collect::<String>()
-        .parse::<sysinfo::Pid>()
-        .expect("failed to parse recv lock file");
-    
-    // The rendered lock makes sure that we can unlock even if we have a diferent
-    // process with the same PID.
-    let rendered_lock = render_lock();
+    let owner_pid = contents
+        .split("pid=")
+        .collect::<Vec<_>>()
+        .get(1)
+        .map(|token| {
+            token
+                .chars()
+                .take_while(|ch| ch.is_digit(10))
+                .collect::<String>()
+                .parse::<sysinfo::Pid>()
+        })
+        .expect("failed to parse recv lock file: no pid")
+        .expect("failed to parse recv lock file: bad pid");
+
+    let owner_token = contents
+        .split("token=")
+        .collect::<Vec<_>>()
+        .get(1)
+        .map(|token| {
+            token
+                .chars()
+                .take_while(|ch| ch.is_digit(10))
+                .collect::<String>()
+                .parse::<u64>()
+        })
+        .expect("failed to parse recv lock file: no token")
+        .expect("failed to parse recv lock file: bad token");
 
     let system = System::new_with_specifics(RefreshKind::new().with_processes());
 
     // Maybe somebody else is holding the lock:
-    let process_exists_and_is_not_me = *owner_pid as u32 != std::process::id() && system.get_processes().get(&owner_pid).is_some();
+    let process_exists_and_is_not_me =
+        owner_pid as u32 != std::process::id() && system.get_processes().get(&owner_pid).is_some();
     // I am holding the lock:
-    let lock_is_the_same_and_is_me = *owner_pid as u32 == std::process::id() && rendered_lock == contents;
+    let lock_is_the_same_and_is_me =
+        owner_pid as u32 == std::process::id() && owner_token == *UNIQUE_PROCESS_TOKEN;
 
-    if process_exists_and_is_not_me || lock_is_the_same_and_is_me {
+    if process_exists_and_is_not_me {
         return Err(io::Error::new(
             io::ErrorKind::Other,
             format!(
-                "process {} is still locking `{:?}`",
+                "another process, of id {}, is still locking `{:?}`",
                 owner_pid,
+                lock_filename.as_ref()
+            ),
+        ));
+    } else if lock_is_the_same_and_is_me {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!(
+                "current process is still locking `{:?}`",
                 lock_filename.as_ref()
             ),
         ));
@@ -168,7 +195,6 @@ mod tests {
     fn test_unlock() {
         // Create a guard:
         let guard = FileGuard::try_lock("data/test-unlock.lock").unwrap();
-        dbg!(std::process::id());
 
         // "Forget" to drop it:
         std::mem::forget(guard);

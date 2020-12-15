@@ -480,11 +480,15 @@ impl Receiver {
         Ok(len)
     }
 
-    /// Reads one element from the queue, inevitably advancing the file reader.
+    /// Reads one element from the queue, inevitably advancing the file reader. 
+    /// Instead of returning the element, this function puts it in the "read and
+    /// unused" queue to be used later. This enables us to construct "atomic in 
+    /// async context" guarantees for the higher level functions. The ideia is to
+    /// _drain the queue_ only after the last `.await` in the block.
     ///
-    /// This operation is atomic. If the returned future is not polled to
-    /// completion, as, e.g., when calling `select`, the operation will be
-    /// undone.
+    /// This operation is also itlsef atomic. If the returned future is not
+    /// polled to completion, as, e.g., when calling `select`, the operation 
+    /// will count as not done.
     async fn read_one(&mut self) -> io::Result<()> {
         // Get the length:
         let len = self.read_header().await?;
@@ -505,6 +509,14 @@ impl Receiver {
         Ok(())
     }
 
+    /// Reads one element from the queue until a future elapses. If the future
+    /// elapses first, then `OK(false)` is returned and no element is put in 
+    /// the "read and unused" internal queue. Otherwise, `Ok(true)` is returned
+    /// and exactly one element is put in the "read and unused" queue.
+    ///
+    /// This operation is atomic. If the returned future is not polled to
+    /// completion, as, e.g., when calling `select`, the operation will be
+    /// undone.
     async fn read_one_timeout<F>(&mut self, timeout: F) -> io::Result<bool>
     where
         F: Future<Output = ()> + Unpin,
@@ -516,11 +528,13 @@ impl Receiver {
     }
 
     /// Drains `n` elements from the "read and unused" queue into a vector. This
-    /// operation is "atomic in an async context", since it is not `async`.
+    /// operation is "atomic in an async context", since it is not `async`. For a
+    /// function to enjoy the same guarantee, this function must only be called 
+    /// after the last `.await` in the caller's control flow.
     fn drain(&mut self, n: usize) -> Vec<Vec<u8>> {
         let mut data = Vec::with_capacity(n);
 
-        // (careful! need to check if read something to avoid an eroneous POP 
+        // (careful! need to check if read something to avoid an eroneous POP
         // from the queue)
         if n > 0 {
             while let Some(element) = self.read_and_unused.pop_front() {
@@ -580,6 +594,20 @@ impl Receiver {
         })
     }
 
+    /// Tries to retrieve an element from the queue until a given future 
+    /// finishes. If an element arrives first, he returned value is a guard 
+    /// that will only commit state changes to the queue when dropped. 
+    /// Otherwise, `Ok(None)` is returned.
+    /// 
+    /// This operation is atomic. If the returned future is not polled to
+    /// completion, as, e.g., when calling `select`, the operation will be
+    /// undone.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if it has to start reading a new segment and
+    /// it is not able to set up the notification handler to watch for file
+    /// changes.
     pub async fn recv_timeout<F>(
         &mut self,
         timeout: F,
@@ -640,6 +668,23 @@ impl Receiver {
         })
     }
 
+    /// Tries to remove a number of elements from the queue until a given future
+    ///  finished. The values taken from the queue will be the values that were
+    /// available durng the whole execution of the future and thus less than `n`
+    /// elements might be returned. The returned items are wrapped in a guard 
+    /// that will only commit state changes to the queue when dropped.
+    ///
+    /// # Note
+    ///
+    /// This operation is atomic in an asynchronous context. This means that you
+    /// will not lose the elements if you do not await this function to
+    /// completion.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if it has to start reading a new segment and
+    /// it is not able to set up the notification handler to watch for file
+    /// changes.
     pub async fn recv_batch_timeout<F>(
         &mut self,
         n: usize,
@@ -731,7 +776,6 @@ impl Receiver {
         // And now, drain!
         let data = self.drain(n_read);
         Ok(RecvGuard {
-
             receiver: self,
             len: data.iter().map(|item| 4 + item.len()).sum(),
             item: Some(data),

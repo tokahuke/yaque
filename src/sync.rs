@@ -14,7 +14,7 @@ use std::task::{Context, Poll, Waker};
 use crate::watcher::{file_removal_watcher, file_watcher};
 
 lazy_static! {
-    static ref UNIQUE_PROCESS_TOKEN: u64 = rand::thread_rng().gen();
+    pub(crate) static ref UNIQUE_PROCESS_TOKEN: u64 = rand::thread_rng().gen();
 }
 
 pub fn render_lock() -> String {
