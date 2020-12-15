@@ -149,6 +149,7 @@ pub mod recovery;
 
 pub use sync::FileGuard;
 
+use std::collections::VecDeque;
 use std::fs::*;
 use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
@@ -371,6 +372,9 @@ pub struct Receiver {
     state: QueueState,
     base: PathBuf,
     persistence: FilePersistence,
+    /// Use this queue to buffer elements and provide "atomicity in an
+    /// asynchronous context".
+    read_and_unused: VecDeque<Vec<u8>>,
 }
 
 impl Receiver {
@@ -413,6 +417,7 @@ impl Receiver {
             state,
             base: PathBuf::from(base.as_ref()),
             persistence,
+            read_and_unused: VecDeque::new(),
         })
     }
 
@@ -478,12 +483,12 @@ impl Receiver {
     /// This operation is atomic. If the returned future is not polled to
     /// completion, as, e.g., when calling `select`, the operation will be
     /// undone.
-    async fn read_one(&mut self) -> io::Result<Vec<u8>> {
+    async fn read_one(&mut self) -> io::Result<()> {
         // Get the length:
         let len = self.read_header().await?;
 
         // With the length, read the data:
-        let mut data = (0..len).map(|_| 0).collect::<Vec<_>>();
+        let mut data = vec![0; len as usize];
         self.tail_follower
             .read_exact(&mut data)
             .await
@@ -492,7 +497,10 @@ impl Receiver {
         // We are done! Unset header:
         self.maybe_header = None;
 
-        Ok(data)
+        // Ready to be used:
+        self.read_and_unused.push_back(data);
+
+        Ok(())
     }
 
     /// Saves the receiver queue state. You do not need to use method in most
@@ -523,7 +531,14 @@ impl Receiver {
     /// it is not able to set up the notification handler to watch for file
     /// changes.
     pub async fn recv(&mut self) -> io::Result<RecvGuard<'_, Vec<u8>>> {
-        let data = self.read_one().await?;
+        let data = if let Some(data) = self.read_and_unused.pop_front() {
+            data
+        } else {
+            self.read_one().await?;
+            self.read_and_unused
+                .pop_front()
+                .expect("guaranteed to yield an element")
+        };
 
         Ok(RecvGuard {
             receiver: self,
@@ -538,10 +553,9 @@ impl Receiver {
     ///
     /// # Note
     ///
-    /// This operation is not yet atomic in an asynchronous context. This means
-    /// that you will lose the elements if you do not await this function to
-    /// completion. This will change in the future. If you need this feature,
-    /// please file an issue in GitHub.
+    /// This operation is atomic in an asynchronous context. This means that you
+    /// will not lose the elements if you do not await this function to
+    /// completion.
     ///
     /// # Panics
     ///
@@ -549,10 +563,27 @@ impl Receiver {
     /// it is not able to set up the notification handler to watch for file
     /// changes.
     pub async fn recv_batch(&mut self, n: usize) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>> {
-        let mut data = vec![];
+        let mut data = Vec::with_capacity(n);
 
-        for _ in 0..n {
-            data.push(self.read_one().await?);
+        // First, fetch what is missing from the disk:
+        if n > self.read_and_unused.len() {
+            for _ in 0..(n - self.read_and_unused.len()) {
+                self.read_one().await?;
+            }
+        }
+
+        // And now, drain! (careful! need to check if read something to avoid
+        // an eroneous POP from the queue)
+        if n > 0 {
+            while let Some(element) = self.read_and_unused.pop_front() {
+                data.push(element);
+
+                // This is useless, since we know `read_and_unused` is the same
+                // size of `data`, but hey! I take no chances of being wrong!
+                if data.len() == n {
+                    break;
+                }
+            }
         }
 
         Ok(RecvGuard {
@@ -571,6 +602,12 @@ impl Receiver {
     /// element. This allows you to return early and leave the queue intact.
     /// The returned value is a guard that will only commit state changes to
     /// the queue when dropped.
+    ///
+    /// # Note
+    ///
+    /// This operation is atomic in an asynchronous context. This means that you
+    /// will not lose the elements if you do not await this function to
+    /// completion.
     ///
     /// # Example
     ///
@@ -593,18 +630,38 @@ impl Receiver {
         Fut: std::future::Future<Output = bool>,
     {
         let mut data = vec![];
+        let mut n_read = 0;
 
         // Prepare:
         predicate(None).await;
 
         // Poor man's do-while (aka. until)
         loop {
-            let item = self.read_one().await?;
+            // Need to fetch from disk?
+            if n_read == self.read_and_unused.len() {
+                self.read_one().await?;
+            }
 
-            if !predicate(Some(&item)).await {
-                data.push(item);
+            let item_ref = &self.read_and_unused[n_read];
+
+            if !predicate(Some(item_ref)).await {
+                n_read += 1;
             } else {
                 break;
+            }
+        }
+
+        // And now, drain! (careful! need to check if read something to avoid
+        // an eroneous POP from the queue)
+        if n_read > 0 {
+            while let Some(element) = self.read_and_unused.pop_front() {
+                data.push(element);
+
+                // This is useless, since we know `read_and_unused` is the same
+                // size of `data`, but hey! I take no chances of being wrong!
+                if data.len() == n_read {
+                    break;
+                }
             }
         }
 
@@ -761,6 +818,9 @@ fn init_log() {
 
     // Remove an old test:
     std::fs::remove_dir_all("data").ok();
+
+    // Create new structure:
+    std::fs::create_dir_all("data").unwrap();
 }
 
 #[cfg(test)]
@@ -861,7 +921,7 @@ mod tests {
     #[test]
     fn test_enqueue_dequeue_parallel() {
         // Generate data:
-        let dataset = data_lots_of_data().take(1_000_000).collect::<Vec<_>>();
+        let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
         let arc_sender = Arc::new(dataset);
         let arc_receiver = arc_sender.clone();
 
@@ -966,6 +1026,23 @@ mod tests {
                 i += 1;
                 received.commit();
             }
+        });
+    }
+
+    #[test]
+    fn test_rollback() {
+        futures::executor::block_on(async move {
+            let (mut sender, mut receiver) = channel("data/rollback").unwrap();
+            sender.send(b"123").unwrap();
+            sender.send(b"456").unwrap();
+
+            assert_eq!(&*receiver.recv().await.unwrap(), b"123");
+            assert_eq!(&*receiver.recv().await.unwrap(), b"123");
+
+            receiver.recv().await.unwrap().commit();
+
+            assert_eq!(&*receiver.recv().await.unwrap(), b"456");
+            assert_eq!(&*receiver.recv().await.unwrap(), b"456");
         });
     }
 }
