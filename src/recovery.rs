@@ -19,7 +19,7 @@ use super::queue::{recv_lock_filename, send_lock_filename};
 /// # Panics
 ///
 /// This function panics if it cannot parse the lockfile.
-fn unlock<P: AsRef<Path>>(lock_filename: P) -> io::Result<()> {
+pub fn unlock<P: AsRef<Path>>(lock_filename: P) -> io::Result<()> {
     let contents = match read_to_string(&lock_filename) {
         Ok(contents) => contents,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
