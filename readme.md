@@ -18,7 +18,7 @@ other executor of your choice.
 
 ## Sample usage
 
-To create a new queue, just use the [`channel`] function, passing a
+To create a new queue, just use the `channel` function, passing a
 directory path on which to mount the queue. If the directory does not exist
 on creation, it (and possibly all its parent directories) will be created.
 ```
@@ -28,11 +28,11 @@ futures::executor::block_on(async {
     let (mut sender, mut receiver) = channel("data/my-queue").unwrap();
 })
 ```
-You can also use [`Sender::open`] and [`Receiver::open`] to open only one
+You can also use `Sender::open` and `Receiver::open` to open only one
 half of the channel, if you need to.
 
 The usage is similar to the MPSC channel in the standard library, except
-that the receiving method, [`Receiver::recv`] is asynchronous. Writing to
+that the receiving method, `Receiver::recv` is asynchronous. Writing to
 the queue with the sender is basically lock-free and atomic.
 ```
 use yaque::{channel, try_clear};
@@ -61,19 +61,19 @@ try_clear("data/my-queue").unwrap();
 The returned value `data` is a kind of guard that implements `Deref` and
 `DerefMut` on the underlying type.
 
-## [`queue::RecvGuard`] and transactional behavior
+## `queue::RecvGuard` and transactional behavior
 
 One important thing to notice is that reads from the queue are
-_transactional_. The [`Receiver::recv`] returns a [`queue::RecvGuard`] that acts as
+_transactional_. The `Receiver::recv` returns a `queue::RecvGuard` that acts as
 a _dead man switch_. If dropped, it will revert the dequeue operation,
-unless [`queue::RecvGuard::commit`] is explicitly called. This ensures that
+unless `queue::RecvGuard::commit` is explicitly called. This ensures that
 the operation reverts on panics and early returns from errors (such as when
 using the `?` notation). However, it is necessary to perform one more
 filesystem operation while rolling back. During drop, this is done on a
 "best effort" basis: if an error occurs, it is logged and ignored. This is done
 because errors cannot propagate outside a drop and panics in drops risk the
 program being aborted. If you _have_ any cleanup behavior for an error from
-rolling back, you may call [`queue::RecvGuard::rollback`] which _will_ return the
+rolling back, you may call `queue::RecvGuard::rollback` which _will_ return the
 underlying error.
 
 ## Batches
@@ -81,14 +81,14 @@ underlying error.
 You can use the `yaque` queue to send and receive batches of data ,
 too. The guarantees are the same as with single reads and writes, except
 that you may save on OS overhead when you send items, since only one disk
-operation is made. See [`Sender::send_batch`], [`Receiver::recv_batch`] and
-[`Receiver::recv_until`] for more information on receiver batches.
+operation is made. See `Sender::send_batch`, `Receiver::recv_batch` and
+`Receiver::recv_until` for more information on receiver batches.
 
 ## Tired of `.await`ing? Timeouts are supported
 
 If you need your application to not stall when nothing is being put on the
-queue, you can use [`Receiver::recv_timeout`] and 
-[`Receiver::recv_batch_timeout`] to receive data, awaiting up to a 
+queue, you can use `Receiver::recv_timeout` and 
+`Receiver::recv_batch_timeout` to receive data, awaiting up to a 
 completion of a provided future, such as a delay or a channel. Here is an 
 example:
 ```
@@ -153,8 +153,8 @@ of two positions:
 Depending on your use case, this might be information enough so that not all
 hope is lost. However, this is all you will get.
 
-If you really want to err on the safer side, you may use [`Sender::save`]
-and [`Receiver::save`] to periodically back the queue state up. Just choose
+If you really want to err on the safer side, you may use `Sender::save`
+and `Receiver::save` to periodically back the queue state up. Just choose
 you favorite timer implementation and set a simple periodical task up every
 hundreds of milliseconds. However, be warned that this is only a _mitigation_
 of consistency problems, not a solution.
@@ -169,14 +169,3 @@ writing in batches to the queue.
 * There are probably unknown bugs hidden in some corner case. If you find
 one, please fill an issue in GitHub. Pull requests and contributions are
 also greatly appreciated.
-
-mod state;
-mod sync;
-mod watcher;
-
-#[cfg(feature = "recovery")]
-pub mod recovery;
-pub mod queue;
-
-pub use sync::FileGuard;
-pub use queue::{Sender, Receiver, channel};
