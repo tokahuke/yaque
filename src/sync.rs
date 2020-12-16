@@ -27,8 +27,12 @@ pub fn render_lock() -> String {
     )
 }
 
-/// A lock using the atomicity of `OpenOptions::create_new`. Be careful! You can
-/// easily delete it and everything goes down the drain.
+/// A lock using the atomicity of `OpenOptions::create_new`.
+/// 
+/// Be careful! You can easily delete it; just open your file explorer throw
+/// it into the trash. It is not the most guaranteed for of atomicity, but it
+/// is one standard way of providing a persistent locking mechanism between
+/// processes. 
 pub struct FileGuard {
     path: PathBuf,
     ignore: bool,

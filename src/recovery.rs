@@ -10,8 +10,8 @@ use std::path::Path;
 use sysinfo::*;
 
 use super::state::{FilePersistence, QueueState};
-use super::sync::UNIQUE_PROCESS_TOKEN;
-use super::{recv_lock_filename, send_lock_filename, FileGuard};
+use super::sync::{UNIQUE_PROCESS_TOKEN, FileGuard};
+use super::queue::{recv_lock_filename, send_lock_filename};
 
 /// Unlocks a lock file if the owning process does not exist anymore. This
 /// function does nothing if the file does not exist.
