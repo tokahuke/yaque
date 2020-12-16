@@ -21,7 +21,7 @@ other executor of your choice.
 To create a new queue, just use the `channel` function, passing a
 directory path on which to mount the queue. If the directory does not exist
 on creation, it (and possibly all its parent directories) will be created.
-```
+```rust
 use yaque::channel;
 
 futures::executor::block_on(async {
@@ -34,7 +34,7 @@ half of the channel, if you need to.
 The usage is similar to the MPSC channel in the standard library, except
 that the receiving method, `Receiver::recv` is asynchronous. Writing to
 the queue with the sender is basically lock-free and atomic.
-```
+```rust
 use yaque::{channel, try_clear};
 
 futures::executor::block_on(async {
@@ -91,7 +91,7 @@ queue, you can use `Receiver::recv_timeout` and
 `Receiver::recv_batch_timeout` to receive data, awaiting up to a 
 completion of a provided future, such as a delay or a channel. Here is an 
 example:
-```
+```rust
 use yaque::{channel, try_clear};
 use std::time::Duration;
 use futures_timer::Delay;
