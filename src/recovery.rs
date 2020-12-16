@@ -9,9 +9,9 @@ use std::io;
 use std::path::Path;
 use sysinfo::*;
 
-use super::state::{FilePersistence, QueueState};
-use super::sync::{UNIQUE_PROCESS_TOKEN, FileGuard};
 use super::queue::{recv_lock_filename, send_lock_filename};
+use super::state::{FilePersistence, QueueState};
+use super::sync::{FileGuard, UNIQUE_PROCESS_TOKEN};
 
 /// Unlocks a lock file if the owning process does not exist anymore. This
 /// function does nothing if the file does not exist.
@@ -216,13 +216,25 @@ mod tests {
 
     // TODO missing test for `guess_send_metadata` and `recover`.
 
+    // #[test]
+    // fn test_guess_send_metadata() {
+    //     unimplemented!()
+    // }
+
     #[test]
-    fn test_guess_send_metadata() {
-        unimplemented!()
+    #[should_panic]
+    fn test_recover_while_open() {
+        // Create a channel:
+        let channel = crate::channel("data/recover-while-open").unwrap();
+
+        recover("data/recover-while-open").unwrap();
+
+        drop(channel);
     }
 
     #[test]
-    fn test_recover() {
-        unimplemented!()
+    #[should_panic]
+    fn test_recover_inexistent() {
+        recover("data/recover-inexistent").unwrap();
     }
 }

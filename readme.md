@@ -100,7 +100,10 @@ futures::executor::block_on(async {
     let (mut sender, mut receiver) = channel("data/my-queue").unwrap();
     
     // receive some data up to a second
-    let data = receiver.recv_timeout(Delay::new(Duration::from_secs(1))).await.unwrap();
+    let data = receiver
+        .recv_timeout(Delay::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
 
     // Nothing was sent, so no data...
     assert!(data.is_none());
@@ -109,9 +112,14 @@ futures::executor::block_on(async {
     sender.send(b"some data").unwrap();
  
     // ... now you receive something:
-    let data = receiver.recv_timeout(Delay::new(Duration::from_secs(1))).await.unwrap();
+    let data = receiver
+        .recv_timeout(Delay::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
 
     assert_eq!(&*data.unwrap(), b"some data");  
+
+    data.commit();
 });
 ```
 

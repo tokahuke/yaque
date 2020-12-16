@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::state::FilePersistence;
 use crate::state::QueueState;
-use crate::sync::{TailFollower, FileGuard};
+use crate::sync::{FileGuard, TailFollower};
 
 /// The name of segment file in the queue folder.
 fn segment_filename<P: AsRef<Path>>(base: P, segment: u64) -> PathBuf {
@@ -586,7 +586,7 @@ impl Receiver {
     /// # Example
     ///
     /// Receive until an empty element is received:
-    /// ```rust
+    /// ```ignore
     /// let recv_guard = receiver.recv_until(|element| async { element.is_empty() });
     /// ```
     ///

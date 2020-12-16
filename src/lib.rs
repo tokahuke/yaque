@@ -21,7 +21,7 @@
 //! To create a new queue, just use the [`channel`] function, passing a
 //! directory path on which to mount the queue. If the directory does not exist
 //! on creation, it (and possibly all its parent directories) will be created.
-//! ```
+//! ```rust
 //! use yaque::channel;
 //!
 //! futures::executor::block_on(async {
@@ -34,8 +34,8 @@
 //! The usage is similar to the MPSC channel in the standard library, except
 //! that the receiving method, [`Receiver::recv`] is asynchronous. Writing to
 //! the queue with the sender is basically lock-free and atomic.
-//! ```
-//! use yaque::{channel, try_clear};
+//! ```rust
+//! use yaque::{channel, queue::try_clear};
 //!
 //! futures::executor::block_on(async {
 //!     // Open using the `channel` function or directly with the constructors.
@@ -85,36 +85,43 @@
 //! [`Receiver::recv_until`] for more information on receiver batches.
 //!
 //! ## Tired of `.await`ing? Timeouts are supported
-//! 
+//!
 //! If you need your application to not stall when nothing is being put on the
-//! queue, you can use [`Receiver::recv_timeout`] and 
-//! [`Receiver::recv_batch_timeout`] to receive data, awaiting up to a 
-//! completion of a provided future, such as a delay or a channel. Here is an 
+//! queue, you can use [`Receiver::recv_timeout`] and
+//! [`Receiver::recv_batch_timeout`] to receive data, awaiting up to a
+//! completion of a provided future, such as a delay or a channel. Here is an
 //! example:
-//! ```
-//! use yaque::{channel, try_clear};
+//! ```rust
+//! use yaque::channel;
 //! use std::time::Duration;
 //! use futures_timer::Delay;
-//! 
+//!
 //! futures::executor::block_on(async {
-//!     let (mut sender, mut receiver) = channel("data/my-queue").unwrap();
+//!     let (mut sender, mut receiver) = channel("data/my-queue-2").unwrap();
 //!     
 //!     // receive some data up to a second
-//!     let data = receiver.recv_timeout(Delay::new(Duration::from_secs(1))).await.unwrap();
+//!     let data = receiver
+//!         .recv_timeout(Delay::new(Duration::from_secs(1)))
+//!         .await
+//!         .unwrap();
 //!
 //!     // Nothing was sent, so no data...
 //!     assert!(data.is_none());
-//!
+//!     drop(data);
+//!     
 //!     // ... but if you do send something...
 //!     sender.send(b"some data").unwrap();
 //!  
 //!     // ... now you receive something:
-//!     let data = receiver.recv_timeout(Delay::new(Duration::from_secs(1))).await.unwrap();
+//!     let data = receiver
+//!         .recv_timeout(Delay::new(Duration::from_secs(1)))
+//!         .await
+//!         .unwrap();
 //!
 //!     assert_eq!(&*data.unwrap(), b"some data");  
 //! });
 //! ```
-//! 
+//!
 //! ## `Ctrl+C` and other unexpected events
 //!
 //! During some anomalous behavior, the queue might enter an inconsistent state.
@@ -174,9 +181,9 @@ mod state;
 mod sync;
 mod watcher;
 
+pub mod queue;
 #[cfg(feature = "recovery")]
 pub mod recovery;
-pub mod queue;
 
+pub use queue::{channel, Receiver, Sender};
 pub use sync::FileGuard;
-pub use queue::{Sender, Receiver, channel};
