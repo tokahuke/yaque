@@ -184,6 +184,11 @@ impl Sender {
 
     /// Sends all the contents of an iterable into the queue. All is buffered
     /// to be sent atomically, in one flush operation.
+    ///
+    /// # Errors
+    ///
+    /// This function returns any underlying errors encountered while writing or
+    /// flushing the queue.
     pub fn send_batch<I>(&mut self, it: I) -> io::Result<()>
     where
         I: IntoIterator,

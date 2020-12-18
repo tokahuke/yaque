@@ -27,7 +27,7 @@ pub fn render_lock() -> String {
     )
 }
 
-/// A lock using the atomicity of `OpenOptions::create_new`.
+/// A lock using the atomicity of [`OpenOptions::create_new`].
 ///
 /// Be careful! You can easily delete it; just open your file explorer throw
 /// it into the trash. It is not the most guaranteed for of atomicity, but it
