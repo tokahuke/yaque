@@ -1,5 +1,6 @@
 //! Structures for managing the state of a queue.
 
+use std::cmp::{Ordering, PartialOrd};
 use std::fs::*;
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -27,7 +28,61 @@ impl Default for QueueState {
     }
 }
 
+impl PartialOrd for QueueState {
+    fn partial_cmp(&self, other: &QueueState) -> Option<Ordering> {
+        if self.segment_size != other.segment_size {
+            None
+        } else if self.segment > other.segment {
+            Some(Ordering::Greater)
+        } else if self.segment < other.segment {
+            Some(Ordering::Less)
+        } else {
+            Some(self.position.cmp(&other.position))
+        }
+    }
+}
+
 impl QueueState {
+    /// Guesses the send metadata for a given queue. This equals to the top
+    /// position in the greatest segment present in the directory. This function
+    /// will substitute the current send metadata by this guess upon acquiring
+    /// the send lock on this queue.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if there is a file in the queue folder with extension
+    /// `.q` whose name is not an integer, such as `foo.q`.
+    pub fn for_send_metadata<P: AsRef<Path>>(base: P) -> io::Result<QueueState> {
+        // Find greatest segment:
+        let mut max_segment = 0;
+        for maybe_entry in read_dir(base.as_ref())? {
+            let path = maybe_entry?.path();
+            if path.extension().map(|ext| ext == "q").unwrap_or(false) {
+                let segment = path
+                    .file_stem()
+                    .expect("has extension, therefore has stem")
+                    .to_string_lossy()
+                    .parse::<u64>()
+                    .expect("failed to parse segment filename");
+
+                max_segment = u64::max(segment, max_segment);
+            }
+        }
+
+        // Find top position in the segment:
+        let segment_metadata = metadata(base.as_ref().join(format!("{}.q", max_segment)))?;
+        let position = segment_metadata.len();
+
+        // Generate new queue state:
+        let queue_state = QueueState {
+            segment: max_segment,
+            position,
+            ..QueueState::default()
+        };
+
+        Ok(queue_state)
+    }
+
     /// Advances to the next segment.
     pub fn advance_segment(&mut self) -> u64 {
         self.position = 0;
@@ -53,13 +108,8 @@ impl QueueState {
 
 /// An implementation of persistence using the filesystem itself.
 #[derive(Default)]
-pub struct FilePersistence {
+pub struct QueueStatePersistence {
     path: Option<PathBuf>,
-}
-
-/// The name of the file from the sender side inside the queue folder.
-fn send_persistence_filename<P: AsRef<Path>>(base: P) -> PathBuf {
-    base.as_ref().join("send-metadata")
 }
 
 /// The name of the file inside the queue folder.
@@ -67,14 +117,15 @@ fn recv_persistence_filename<P: AsRef<Path>>(base: P) -> PathBuf {
     base.as_ref().join("recv-metadata")
 }
 
-impl FilePersistence {
+impl QueueStatePersistence {
     /// Creates a new file persistence.
-    pub fn new() -> FilePersistence {
-        FilePersistence::default()
+    pub fn new() -> QueueStatePersistence {
+        QueueStatePersistence::default()
     }
 
-    fn open<P: AsRef<Path>>(&mut self, path: P) -> io::Result<QueueState> {
-        self.path = Some(path.as_ref().to_path_buf());
+    pub fn open<P: AsRef<Path>>(&mut self, base: P) -> io::Result<QueueState> {
+        let path = recv_persistence_filename(base);
+        self.path = Some(path.clone());
 
         let mut u64_buffer = [0; 8];
 
@@ -94,17 +145,6 @@ impl FilePersistence {
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(QueueState::default()),
             Err(err) => Err(err),
         }
-    }
-
-    /// Returns the queue state for the given queue path.
-    pub fn open_send<P: AsRef<Path>>(&mut self, base: P) -> io::Result<QueueState> {
-        self.open(send_persistence_filename(base))
-    }
-
-    /// Returns the queue state for the given queue path. This method will
-    /// always be invoked *before* and calls to `save` are made.
-    pub fn open_recv<P: AsRef<Path>>(&mut self, base: P) -> io::Result<QueueState> {
-        self.open(recv_persistence_filename(base))
     }
 
     /// Saves the queue state.

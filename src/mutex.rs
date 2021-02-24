@@ -17,16 +17,18 @@ pub struct Mutex {
 }
 
 impl Mutex {
-    /// Opens a new mutex, given the path for a folder in which the mutes will be mounted. 
+    /// Opens a new mutex, given the path for a folder in which the mutes will be mounted.
     /// This will create a new floder if one does not exist yet.
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// This function fails if it fcannot create the folder which is giong to contain the
     /// mutex.
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Mutex> {
         fs::create_dir_all(&path)?;
-        Ok(Mutex { path: path.as_ref().to_owned() })
+        Ok(Mutex {
+            path: path.as_ref().to_owned(),
+        })
     }
 
     /// Locks this mutex, awaitng for it to unlock if it is locked.

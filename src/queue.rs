@@ -8,8 +8,9 @@ use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
-use crate::state::FilePersistence;
+use crate::header;
 use crate::state::QueueState;
+use crate::state::QueueStatePersistence;
 use crate::sync::{FileGuard, TailFollower};
 
 /// The name of segment file in the queue folder.
@@ -73,7 +74,6 @@ pub struct Sender {
     file: io::BufWriter<File>,
     state: QueueState,
     base: PathBuf,
-    persistence: FilePersistence,
 }
 
 impl Sender {
@@ -91,10 +91,9 @@ impl Sender {
 
         log::trace!("created queue directory");
 
-        // Acquire lock and state:
+        // Acquire lock and guess statestate:
         let file_guard = try_acquire_send_lock(base.as_ref())?;
-        let mut persistence = FilePersistence::new();
-        let state = persistence.open_send(base.as_ref())?;
+        let state = QueueState::for_send_metadata(base.as_ref())?;
 
         log::trace!("sender lock acquired. Sender state now is {:?}", state);
 
@@ -113,7 +112,6 @@ impl Sender {
             file,
             state,
             base: PathBuf::from(base.as_ref()),
-            persistence,
         })
     }
 
@@ -128,8 +126,12 @@ impl Sender {
     /// unreliable filesystem. It was implmemented this way because no errors
     /// are allowed to propagate on drop and panicking will abort the program if
     /// drop is called during a panic.
+    #[deprecated(
+        since = "0.5.0",
+        note = "the sender state is always inferred. There is no need to save anything"
+    )]
     pub fn save(&mut self) -> io::Result<()> {
-        self.persistence.save(&self.state)
+        Ok(())
     }
 
     /// Just writes to the internal buffer, but doesn't flush it.
@@ -137,7 +139,7 @@ impl Sender {
         // Get length of the data and write the header:
         let len = data.as_ref().len();
         assert!(len < std::u32::MAX as usize);
-        let header = (len as u32).to_be_bytes();
+        let header = header::encode_len(len as u32);
 
         // Write stuff to the file:
         self.file.write_all(&header)?;
@@ -213,14 +215,6 @@ impl Sender {
     }
 }
 
-impl Drop for Sender {
-    fn drop(&mut self) {
-        if let Err(err) = self.persistence.save(&self.state) {
-            log::error!("could not release sender lock: {}", err);
-        }
-    }
-}
-
 /// The receiver part of the queue. This part is asynchronous and therefore
 /// needs an executor that will the poll the futures to completion.
 pub struct Receiver {
@@ -229,7 +223,7 @@ pub struct Receiver {
     maybe_header: Option<[u8; 4]>,
     state: QueueState,
     base: PathBuf,
-    persistence: FilePersistence,
+    persistence: QueueStatePersistence,
     /// Use this queue to buffer elements and provide "atomicity in an
     /// asynchronous context".
     read_and_unused: VecDeque<Vec<u8>>,
@@ -257,8 +251,8 @@ impl Receiver {
 
         // Acquire guard and state:
         let file_guard = try_acquire_recv_lock(base.as_ref())?;
-        let mut persistence = FilePersistence::new();
-        let state = persistence.open_recv(base.as_ref())?;
+        let mut persistence = QueueStatePersistence::new();
+        let state = persistence.open(base.as_ref())?;
 
         log::trace!("receiver lock acquired. Receiver state now is {:?}", state);
 
@@ -312,7 +306,7 @@ impl Receiver {
     async fn read_header(&mut self) -> io::Result<u32> {
         // If the header was already read (by an incomplete operation), use it!
         if let Some(header) = self.maybe_header {
-            return Ok(u32::from_be_bytes(header));
+            return Ok(header::decode_len(header));
         }
 
         // Read header:
@@ -330,8 +324,10 @@ impl Receiver {
         }
 
         // Now, you set the header!
-        self.maybe_header = Some(header);
-        let len = u32::from_be_bytes(header);
+        self.maybe_header = Some(header.clone());
+        let len = header::decode_len(header);
+
+        log::trace!("got header {:?} (read {} bytes)", header, len);
 
         Ok(len)
     }

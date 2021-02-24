@@ -1,8 +1,6 @@
-//! Recovery utilities for queues left in as inconsistent state. Use these
-//! functions if you need to automatically recover from a failure.
-//!
-//! This module is dependent on the `recovery` feature, which is enabled
-//! by default.
+//! Recovery utilities for queues left in as inconsistent state, based on "best
+//! effort" strategies. Use these functions if you need to automatically recover
+//! from a failure.
 //!
 use std::fs::*;
 use std::io;
@@ -10,7 +8,7 @@ use std::path::Path;
 use sysinfo::*;
 
 use super::queue::{recv_lock_filename, send_lock_filename};
-use super::state::{FilePersistence, QueueState};
+use super::state::{QueueState, QueueStatePersistence};
 use super::sync::{FileGuard, UNIQUE_PROCESS_TOKEN};
 
 /// Unlocks a lock file if the owning process does not exist anymore. This
@@ -122,21 +120,30 @@ pub fn unlock_queue<P: AsRef<Path>>(base: P) -> io::Result<()> {
     Ok(())
 }
 
-/// Guesses the send metadata for a given queue. This equals to the top
-/// position in the greatest segment present in the directory. This function
-/// will substitute the current send metadata by this guess upon acquiring
-/// the send lock on this queue.
+/// Guesses the receive metadata for a given queue. This equals to the bottom
+/// position in the smallest segment present in the directory or the existing
+/// receiver metadata, whichever is greater. The reason for this is that the
+/// receive metadata is a lower bound of where the receiver actually was and this
+/// guess is always lower than that.
+///
+/// It is important to note two things:
+/// 1. The data in the current segment will be lost.
+/// 2. You don't need to use this function when replays are acceptable, since
+/// the existing metadata file is already a lower bound of the actual state of
+/// the queue.
+///
+/// You should *not* use this function if you suppose that your data was corrupted.
 ///
 /// # Panics
 ///
 /// This function panics if there is a file in the queue folder with extension
 /// `.q` whose name is not an integer, such as `foo.q`.
-pub fn guess_send_metadata<P: AsRef<Path>>(base: P) -> io::Result<()> {
-    // Lock for sending:
-    let lock = FileGuard::try_lock(send_lock_filename(base.as_ref()))?;
+pub fn guess_recv_metadata<P: AsRef<Path>>(base: P) -> io::Result<()> {
+    // Lock for receiving:
+    let lock = FileGuard::try_lock(recv_lock_filename(base.as_ref()))?;
 
-    // Find greatest segment:
-    let mut max_segment = 0;
+    // Find smallest segment:
+    let mut min_segment = std::u64::MAX;
     for maybe_entry in read_dir(base.as_ref())? {
         let path = maybe_entry?.path();
         if path.extension().map(|ext| ext == "q").unwrap_or(false) {
@@ -147,27 +154,85 @@ pub fn guess_send_metadata<P: AsRef<Path>>(base: P) -> io::Result<()> {
                 .parse::<u64>()
                 .expect("failed to parse segment filename");
 
-            max_segment = u64::max(segment, max_segment);
+            min_segment = u64::min(segment, min_segment);
         }
     }
 
-    // Find top position in the segment:
-    let segment_metadata = metadata(base.as_ref().join(format!("{}.q", max_segment)))?;
-    let position = segment_metadata.len();
+    // Generate new queue state:
+    let queue_state = QueueState {
+        segment: min_segment,
+        ..QueueState::default()
+    };
+
+    // And save the max between the old state and the guessed state:
+    let mut persistence = QueueStatePersistence::new();
+    let old_state = persistence.open(base.as_ref())?;
+    persistence.save(if queue_state > old_state {
+        &queue_state
+    } else {
+        &old_state
+    })?;
+
+    // Drop lock for receiving:
+    drop(lock);
+
+    Ok(())
+}
+
+/// Guesses the receive metadata for a given queue. This equals to the bottom
+/// position in the segment after the smallest one present in the directory.
+/// This function will substitute the current receive metadata by this guess upon
+/// acquiring the receive lock on this queue.
+///
+/// It is important to note two things:
+/// 1. The data in the current segment will be lost.
+/// 2. You don't need to use this function when replays are acceptable, since
+/// the existing metadata file is already a lower bound of the actual state of
+/// the queue.
+///
+/// You should use this function if you suppose that your data was corrupted.
+///
+/// # Panics
+///
+/// This function panics if there is a file in the queue folder with extension
+/// `.q` whose name is not an integer, such as `foo.q`.
+pub fn guess_recv_metadata_with_loss<P: AsRef<Path>>(base: P) -> io::Result<()> {
+    // Lock for receiving:
+    let lock = FileGuard::try_lock(recv_lock_filename(base.as_ref()))?;
+
+    // Find smallest segment:
+    let mut min_segment = std::u64::MAX;
+    for maybe_entry in read_dir(base.as_ref())? {
+        let path = maybe_entry?.path();
+        if path.extension().map(|ext| ext == "q").unwrap_or(false) {
+            let segment = path
+                .file_stem()
+                .expect("has extension, therefore has stem")
+                .to_string_lossy()
+                .parse::<u64>()
+                .expect("failed to parse segment filename");
+
+            min_segment = u64::min(segment, min_segment);
+        }
+    }
+
+    // Destroy the current segment:
+    remove_file(base.as_ref().join(format!("{}.q", min_segment)))?;
 
     // Generate new queue state:
     let queue_state = QueueState {
-        segment: max_segment,
-        position,
+        // as soon as the receiver is initialized, it will go to the next block because it was
+        // already at the end of a block.
+        segment: min_segment + 1,
         ..QueueState::default()
     };
 
     // And save:
-    let mut persistence = FilePersistence::new();
-    let _ = persistence.open_send(base.as_ref())?;
+    let mut persistence = QueueStatePersistence::new();
+    let _ = persistence.open(base.as_ref())?;
     persistence.save(&queue_state)?;
 
-    // Drop lock for sending:
+    // Drop lock for receiving:
     drop(lock);
 
     Ok(())
@@ -175,8 +240,17 @@ pub fn guess_send_metadata<P: AsRef<Path>>(base: P) -> io::Result<()> {
 
 /// Recovers a queue, appliying the following operations, in this order:
 /// * Unlocks both the sender and receiver side of the queue.
-/// * Guesses the position of the sender using [`guess_send_metadata`].
+/// * Guesses the position of the receiver using [`guess_recv_metadata`] (this
+/// is just the existing state of the receiver most of the time).
 ///
+/// This means that some of the data may be replayed, since the receiver
+/// metadata is rarely touched (and it is *always* a lower bound of where the
+/// receiver actually was). If replays are not acceptable, see
+/// [`recover_with_loss`].
+///
+/// You should also use [`recover_with_loss`] if you suppose your data was
+/// corrupted.
+///  
 /// # Panics
 ///
 /// This function panics if there is a file in the queue folder with extension
@@ -184,7 +258,33 @@ pub fn guess_send_metadata<P: AsRef<Path>>(base: P) -> io::Result<()> {
 /// either sending or receiving cannot be parsed.
 pub fn recover<P: AsRef<Path>>(base: P) -> io::Result<()> {
     unlock_queue(base.as_ref())?;
-    guess_send_metadata(base.as_ref())
+    guess_recv_metadata(base.as_ref())?;
+
+    Ok(())
+}
+
+/// Recovers a queue, appliying the following operations, in this order:
+/// * Unlocks both the sender and receiver side of the queue.
+/// * Guesses the position of the receiver using [`guess_recv_metadata_with_loss`]
+/// (this truncates the bottom segment of the queue, resulting in data loss).
+///
+/// This means that some of the data may be lost, since the bottom segment is
+/// erased. If data loss is not acceptable, see [`recover`].
+///
+/// You should not use [`recover`] if you suppose your data was corrupted.
+///  
+/// # Panics
+///
+/// This function panics if there is a file in the queue folder with extension
+/// `.q` whose name is not an integer, such as `foo.q` or if the lockfiles for
+/// either sending or receiving cannot be parsed.
+pub fn recover_with_loss<P: AsRef<Path>>(base: P) -> io::Result<()> {
+    unlock_queue(base.as_ref())?;
+    // this has to be first because it messes with the directory structure, invalidating a possible
+    // call to `guess_send_metadata`.
+    guess_recv_metadata_with_loss(base.as_ref())?;
+
+    Ok(())
 }
 
 #[cfg(test)]

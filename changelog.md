@@ -61,5 +61,17 @@ a single command.
 * `recv_timeout` and `recv_batch_timeout` to allow receiving with timeout.
 * `recv_batch` is "atomic in an asynchronous context".
 * Now, unlock works even if the process respawns with the same PID.
+* Recovery of queue works with two modes: replay, which is the behavior of 
+`recovery::recover`, and "with loss", that discards the bottom segment entirely
+(a bit extreme, but we will work on that). Use the
+`recovery::recover_with_loss` for this option.
 * Docs improvements.
 * Refactored crate structure.
+* Removed sender-side metadata (the `send_metadata` file). Now, the state of the
+sender is always inferred as being the top of the top segment. Period. It
+happens that having sender-side metadata was a liability (risk of overwriting data).
+* Changed in-disk format! However, if you have no items greater than 2GB in size
+(I hope not...), you can still benefit from compatibility. From now on, items are
+limited to ~67MB (a bit tight, I know), but you get parity checking for an extra
+layer of safety. Expect future releases to be completely incompatible with present
+format. Compatibility is only supported within the same _minor_ version.
