@@ -294,7 +294,8 @@ impl Receiver {
 
         log::trace!("acquired new tail follower");
 
-        // Remove old file:
+        // Remove old file (needs to be done *after* opening new file, as there must _always_ be a
+        // segment for the sender to infer its position correcty)
         remove_file(segment_filename(&self.base, self.state.segment - 1))?;
 
         log::trace!("removed old segment file");

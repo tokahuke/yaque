@@ -75,3 +75,7 @@ still benefit from compatibility. From now on, items are limited to ~67MB (a bit
 tight, I know), but you get parity checking for an extra layer of safety. Expect
 future releases to be completely incompatible with present format. Compatibility
 is only supported within the same _minor_ version.
+
+## Version 0.5.1:
+
+* Corrected a bug on the `send_metadata` inferrence thingy. Now, all tests are passing.
