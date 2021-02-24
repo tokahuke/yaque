@@ -1,7 +1,7 @@
-/// Hamming-encoded headers for the preppers. Reading a corrupted header can 
+/// Hamming-encoded headers for the preppers. Reading a corrupted header can
 /// have devastating consequences. It is better to panic. And yes, this _has_
 /// happened in a real world scenario (SIGKILL).
- 
+
 // generate the parity masks:
 // ```python
 // pow2 = {1, 2, 4, 8, 16, 32}
@@ -33,8 +33,11 @@ impl Header {
             "length too big: {} > 2 ^ 26",
             len
         );
-        
-        Header { len, is_legacy: false }
+
+        Header {
+            len,
+            is_legacy: false,
+        }
     }
 
     fn new_legacy(len: u32) -> Header {
@@ -135,13 +138,14 @@ impl Header {
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
 
     fn lots_of_lengths() -> impl Iterator<Item = Header> {
-        (0..).map(|_| Header::new(rand::random::<u32>() & 0x03_FF_FF_FFu32)).take(1_000_000)
+        (0..)
+            .map(|_| Header::new(rand::random::<u32>() & 0x03_FF_FF_FFu32))
+            .take(1_000_000)
     }
 
     #[test]

@@ -53,34 +53,56 @@ impl QueueState {
     /// This function panics if there is a file in the queue folder with extension
     /// `.q` whose name is not an integer, such as `foo.q`.
     pub fn for_send_metadata<P: AsRef<Path>>(base: P) -> io::Result<QueueState> {
-        // Find greatest segment:
-        let mut max_segment = 0;
-        for maybe_entry in read_dir(base.as_ref())? {
-            let path = maybe_entry?.path();
-            if path.extension().map(|ext| ext == "q").unwrap_or(false) {
-                let segment = path
-                    .file_stem()
-                    .expect("has extension, therefore has stem")
-                    .to_string_lossy()
-                    .parse::<u64>()
-                    .expect("failed to parse segment filename");
+        match read_dir(base.as_ref()) {
+            Ok(read_dir) => {
+                log::trace!("base {:?} exists", base.as_ref());
 
-                max_segment = u64::max(segment, max_segment);
+                // Find greatest segment:
+                let mut max_segment = None;
+                for maybe_entry in read_dir {
+                    let path = maybe_entry?.path();
+                    if path.extension().map(|ext| ext == "q").unwrap_or(false) {
+                        let segment = path
+                            .file_stem()
+                            .expect("has extension, therefore has stem")
+                            .to_string_lossy()
+                            .parse::<u64>()
+                            .expect("failed to parse segment filename");
+
+                        max_segment = if let Some(max_segment) = max_segment {
+                            Some(u64::max(segment, max_segment))
+                        } else {
+                            Some(segment)
+                        };
+                    }
+                }
+
+                // May not have found any segment. In this case, queue is empty.
+                if let Some(max_segment) = max_segment {
+                    // Find top position in the segment:
+                    let segment_metadata =
+                        metadata(base.as_ref().join(format!("{}.q", max_segment)))?;
+                    let position = segment_metadata.len();
+
+                    // Generate new queue state:
+                    let queue_state = QueueState {
+                        segment: max_segment,
+                        position,
+                        ..QueueState::default()
+                    };
+
+                    Ok(queue_state)
+                } else {
+                    log::trace!("queue {:?} was empty", base.as_ref());
+                    Ok(QueueState::default())
+                }
             }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                log::trace!("base {:?} doesn't exist", base.as_ref());
+                Ok(QueueState::default())
+            }
+            Err(err) => Err(err),
         }
-
-        // Find top position in the segment:
-        let segment_metadata = metadata(base.as_ref().join(format!("{}.q", max_segment)))?;
-        let position = segment_metadata.len();
-
-        // Generate new queue state:
-        let queue_state = QueueState {
-            segment: max_segment,
-            position,
-            ..QueueState::default()
-        };
-
-        Ok(queue_state)
     }
 
     /// Advances to the next segment.
