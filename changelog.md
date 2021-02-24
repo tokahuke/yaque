@@ -70,8 +70,8 @@ a single command.
 * Removed sender-side metadata (the `send_metadata` file). Now, the state of the
 sender is always inferred as being the top of the top segment. Period. It
 happens that having sender-side metadata was a liability (risk of overwriting data).
-* Changed in-disk format! However, if you have no items greater than 2GB in size
-(I hope not...), you can still benefit from compatibility. From now on, items are
-limited to ~67MB (a bit tight, I know), but you get parity checking for an extra
-layer of safety. Expect future releases to be completely incompatible with present
-format. Compatibility is only supported within the same _minor_ version.
+* Changed in-disk format! However, if you have no items greater than 67MB, you can 
+still benefit from compatibility. From now on, items are limited to ~67MB (a bit
+tight, I know), but you get parity checking for an extra layer of safety. Expect
+future releases to be completely incompatible with present format. Compatibility
+is only supported within the same _minor_ version.

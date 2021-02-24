@@ -8,7 +8,7 @@ use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
-use crate::header;
+use crate::header::Header;
 use crate::state::QueueState;
 use crate::state::QueueStatePersistence;
 use crate::sync::{FileGuard, TailFollower};
@@ -139,7 +139,7 @@ impl Sender {
         // Get length of the data and write the header:
         let len = data.as_ref().len();
         assert!(len < std::u32::MAX as usize);
-        let header = header::encode_len(len as u32);
+        let header = Header::new(len as u32).encode();
 
         // Write stuff to the file:
         self.file.write_all(&header)?;
@@ -303,10 +303,10 @@ impl Receiver {
     }
 
     /// Reads the header. This operation is atomic.
-    async fn read_header(&mut self) -> io::Result<u32> {
+    async fn read_header(&mut self) -> io::Result<Header> {
         // If the header was already read (by an incomplete operation), use it!
         if let Some(header) = self.maybe_header {
-            return Ok(header::decode_len(header));
+            return Ok(Header::decode(header));
         }
 
         // Read header:
@@ -325,11 +325,11 @@ impl Receiver {
 
         // Now, you set the header!
         self.maybe_header = Some(header.clone());
-        let len = header::decode_len(header);
+        let decoded = Header::decode(header);
 
-        log::trace!("got header {:?} (read {} bytes)", header, len);
+        log::trace!("got header {:?} (read {} bytes)", header, decoded.len());
 
-        Ok(len)
+        Ok(decoded)
     }
 
     /// Reads one element from the queue, inevitably advancing the file reader.
@@ -343,10 +343,10 @@ impl Receiver {
     /// will count as not done.
     async fn read_one(&mut self) -> io::Result<()> {
         // Get the length:
-        let len = self.read_header().await?;
+        let header = self.read_header().await?;
 
         // With the length, read the data:
-        let mut data = vec![0; len as usize];
+        let mut data = vec![0; header.len() as usize];
         self.tail_follower
             .read_exact(&mut data)
             .await
