@@ -33,18 +33,32 @@ pub(crate) async fn acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<Fil
     FileGuard::lock(send_lock_filename(base.as_ref())).await
 }
 
+pub(crate) struct QueueSize {
+    pub(crate) in_bytes: u64,
+    pub(crate) in_segments: u64,
+}
+
 /// Non-recursively get the directory size of a given path.
-pub(crate) fn get_dir_size<P: AsRef<Path>>(base: P) -> io::Result<u64> {
-    let mut total = 0;
+pub(crate) fn get_queue_size<P: AsRef<Path>>(base: P) -> io::Result<QueueSize> {
+    let mut in_bytes = 0;
+    let mut in_segments = 0;
 
     for dir_entry in read_dir(base.as_ref())? {
         let dir_entry = dir_entry?;
-        total += dir_entry.metadata()?.len();
+
+        if let Some(extension) = dir_entry.path().extension() {
+            if extension == "q" {
+                in_bytes += dir_entry.metadata()?.len();
+                in_segments += 1;
+            }
+        }
     }
 
-    Ok(total)
+    Ok(QueueSize { in_bytes, in_segments })
 }
 
+/// A builder for the sender side of the queue. Use this if you want to have fine-grained control
+/// over the configuration of the queue. Most defaults sould be ok of most applications.
 pub struct SenderBuilder {
     /// The segment size in bytes that will trigger a new segment to be created. Segments an be
     /// bigger than this to accomodate the last element, but nothing beyond that (each segment
@@ -58,9 +72,8 @@ pub struct SenderBuilder {
     /// accomodate the last segment (the queue must have at least one segment). Set this to `None`
     /// to create an unbounded queue.
     ///
-    /// Small detail: "queue size" is defined here as the total size of the base directory
-    /// (non-recursive). Therefore, metadata is included in the queue size as well as any spurious
-    /// files that may appear (who knows?) in the base folder. Sub-folders, however, don't count.
+    /// This value will be ignored if the queue has only one segment, since the queue would
+    /// deadlock otherwise. It is recomended that you set `max_queue_size >> segment_size`.
     ///
     /// Default value: None
     max_queue_size: Option<NonZeroU64>,
@@ -85,7 +98,7 @@ impl SenderBuilder {
     /// bigger than this to accomodate the last element, but nothing beyond that (each segment
     /// must store at least one element).
     ///
-    /// Default value: 4MB
+    /// Default value: `4 * 1024 * 1024`, or 4MB.
     ///
     /// # Panics
     ///
@@ -101,11 +114,10 @@ impl SenderBuilder {
     /// accomodate the last segment (the queue must have at least one segment). Set this to `None`
     /// to create an unbounded queue.
     ///
-    /// Small detail: "queue size" is defined here as the total size of the base directory
-    /// (non-recursive). Therefore, metadata is included in the queue size as well as any spurious
-    /// files that may appear (who knows?) in the base folder. Sub-folders, however, don't count.
-    ///
-    /// Default value: None
+    /// This value will be ignored if the queue has only one segment, since the queue would
+    /// deadlock otherwise. It is recomended that you set `max_queue_size >> segment_size`.
+    /// 
+    /// Default value: `None`
     ///
     /// # Panics
     ///
@@ -227,12 +239,14 @@ impl Sender {
     #[must_use = "you need to always check if a segment was created or not!"]
     fn try_cap_off_and_move(&mut self) -> io::Result<bool> {
         if let Some(max_queue_size) = self.max_queue_size {
-            let dir_size = get_dir_size(&self.base)?;
+            let queue_size = get_queue_size(&self.base)?;
 
-            if dir_size >= max_queue_size.get() {
+            // Have to check if the number of segments is at least one. Otherwise, the queue will
+            // deadlock.
+            if queue_size.in_bytes >= max_queue_size.get() && queue_size.in_segments > 1 {
                 log::trace!(
                     "oops! Directory size is {}, but max queue size is {}",
-                    dir_size,
+                    queue_size.in_bytes,
                     max_queue_size.get()
                 );
                 return Ok(false);

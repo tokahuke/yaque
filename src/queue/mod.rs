@@ -96,7 +96,7 @@ mod tests {
 
     use crate::error::TrySendError;
 
-    use self::sender::get_dir_size;
+    use self::sender::get_queue_size;
 
     fn data_lots_of_data() -> impl Iterator<Item = Vec<u8>> {
         let mut rng = XorShiftRng::from_rng(rand::thread_rng()).expect("can init");
@@ -468,7 +468,7 @@ mod tests {
             }
         }
 
-        let size = get_dir_size("data/max-queue-size").unwrap();
+        let size = get_queue_size("data/max-queue-size").unwrap().in_bytes;
         assert!(
             size >= 2048,
             "size was {}; should be at least {}",
@@ -496,7 +496,7 @@ mod tests {
             }
         }
 
-        let size = get_dir_size("data/max-queue-size-with-drain").unwrap();
+        let size = get_queue_size("data/max-queue-size-with-drain").unwrap().in_bytes;
         assert!(
             size >= 2048,
             "size was {}; should be at least {}",
@@ -528,42 +528,64 @@ mod tests {
     /// Test enqueuing and dequeueing in parallel.
     #[test]
     fn test_enqueue_dequeue_parallel_with_max_queue_size() {
-        // Generate data:
-        let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
-        let arc_sender = Arc::new(dataset);
-        let arc_receiver = arc_sender.clone();
+        fn test(queue_size: u64) {
+            // Generate data:
+            let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
+            let arc_sender = Arc::new(dataset);
+            let arc_receiver = arc_sender.clone();
 
-        // Enqueue (let's test async send!):
-        let enqueue = std::thread::spawn(move || {
-            futures::executor::block_on(async {
-                let mut sender = SenderBuilder::new()
-                    .max_queue_size(Some(4 * 2 * 1024 * 1024))
-                    .open("data/enqueue-dequeue-parallel-with-max-queue-size")
-                    .unwrap();
-                for data in &*arc_sender {
-                    sender.send(data).await.unwrap();
-                }
+            // Enqueue (let's test async send!):
+            let enqueue = std::thread::spawn(move || {
+                futures::executor::block_on(async {
+                    let mut sender = SenderBuilder::new()
+                        .max_queue_size(Some(queue_size))
+                        .open("data/enqueue-dequeue-parallel-with-max-queue-size")
+                        .unwrap();
+                    for data in &*arc_sender {
+                        sender.send(data).await.unwrap();
+                    }
+                });
             });
-        });
 
-        // Dequeue:
-        let dequeue = std::thread::spawn(move || {
-            futures::executor::block_on(async {
-                let mut receiver =
-                    Receiver::open("data/enqueue-dequeue-parallel-with-max-queue-size").unwrap();
-                let dataset_iter = arc_receiver.iter();
-                let mut i = 0u64;
+            // Dequeue:
+            let dequeue = std::thread::spawn(move || {
+                futures::executor::block_on(async {
+                    let mut receiver =
+                        Receiver::open("data/enqueue-dequeue-parallel-with-max-queue-size").unwrap();
+                    let dataset_iter = arc_receiver.iter();
+                    let mut i = 0u64;
 
-                for should_be in dataset_iter {
-                    let data = receiver.recv().await.unwrap();
-                    assert_eq!(&*data, should_be, "at sample {}", i);
-                    i += 1;
-                    data.commit();
-                }
+                    for should_be in dataset_iter {
+                        let data = receiver.recv().await.unwrap();
+                        assert_eq!(&*data, should_be, "at sample {}", i);
+                        i += 1;
+                        data.commit();
+                    }
+                });
             });
-        });
 
-        enqueue.join().expect("enqueue thread panicked");
-        dequeue.join().expect("dequeue thread panicked");
+            enqueue.join().expect("enqueue thread panicked");
+            dequeue.join().expect("dequeue thread panicked");
+
+            try_clear("data/enqueue-dequeue-parallel-with-max-queue-size").unwrap();
+        }
+        
+        test(2 * 1024 * 1024); // smaller than segment
+        test(4 * 1024 * 1024); // equal to segment
+        test(8 * 1024 * 1024); // bigger than segment
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_small_queue_size() {
+        SenderBuilder::new()
+            .max_queue_size(Some(0));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_small_segment_size() {
+        SenderBuilder::new()
+            .segment_size(0);
     }
 }
