@@ -252,7 +252,7 @@ impl Sender {
             if !self.try_cap_off_and_move()? {
                 return Err(TrySendError::QueueFull {
                     item,
-                    queue_name: format!("{:?}", self.base),
+                    base: self.base.clone(),
                 });
             }
         }
