@@ -93,14 +93,14 @@ mod test {
 
             let guard = mutex.lock().await.unwrap();
 
-            assert_eq!(guard.read().unwrap(), b"some data");
+            assert_eq!(String::from_utf8_lossy(&*guard.read().unwrap()), String::from_utf8_lossy(b"some data"));
         });
     }
 
     #[test]
     fn test_mutex_longer_data_first() {
         futures::executor::block_on(async move {
-            let mutex = Mutex::open("data/mutex").unwrap();
+            let mutex = Mutex::open("data/mutex-longer-data-first").unwrap();
             let guard = mutex.lock().await.unwrap();
 
             guard.write(b"some long data").unwrap();

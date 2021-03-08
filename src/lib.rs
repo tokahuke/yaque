@@ -42,7 +42,7 @@
 //!     let (mut sender, mut receiver) = channel("data/my-queue").unwrap();
 //!     
 //!     // Send stuff with the sender...
-//!     sender.send(b"some data").unwrap();
+//!     sender.send(b"some data").await.unwrap();
 //!
 //!     // ... and receive it in the other side.
 //!     let data = receiver.recv().await.unwrap();
@@ -110,7 +110,7 @@
 //!     drop(data);
 //!     
 //!     // ... but if you do send something...
-//!     sender.send(b"some data").unwrap();
+//!     sender.send(b"some data").await.unwrap();
 //!  
 //!     // ... now you receive something:
 //!     let data = receiver

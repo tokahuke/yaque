@@ -35,7 +35,7 @@ impl<T> fmt::Display for TrySendError<T> {
 
 impl<T> TrySendError<T> {
     /// Tries to unwrap the IO error. If not able to, panics. You can use the following pattern in your code:
-    /// ```
+    /// ```ignore
     /// queue.try_send(b"some stuff").map_err(TrySendError::unwrap_io)?;
     /// ```
     pub fn unwrap_io(self) -> io::Error {
