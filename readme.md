@@ -1,7 +1,7 @@
 # Yaque: Yet Another QUEue
 
 Yaque is yet another disk-backed persistent queue (and mutex) for Rust. It
-implements an SPSC channel using your OS' filesystem. Its main advantages 
+implements an SPSC channel using your OS' filesystem. Its main advantages
 over a simple `VecDeque<T>` are that
 * You are not constrained by your RAM size, just by your disk size. This
 means you can store gigabytes of data without getting OOM killed.
@@ -35,14 +35,14 @@ The usage is similar to the MPSC channel in the standard library, except
 that the receiving method, `Receiver::recv` is asynchronous. Writing to
 the queue with the sender is basically lock-free and atomic.
 ```rust
-use yaque::{channel, try_clear};
+use yaque::{channel, queue::try_clear};
 
 futures::executor::block_on(async {
     // Open using the `channel` function or directly with the constructors.
     let (mut sender, mut receiver) = channel("data/my-queue").unwrap();
     
     // Send stuff with the sender...
-    sender.send(b"some data").unwrap();
+    sender.send(b"some data").await.unwrap();
 
     // ... and receive it in the other side.
     let data = receiver.recv().await.unwrap();
@@ -87,17 +87,17 @@ operation is made. See `Sender::send_batch`, `Receiver::recv_batch` and
 ## Tired of `.await`ing? Timeouts are supported
 
 If you need your application to not stall when nothing is being put on the
-queue, you can use `Receiver::recv_timeout` and 
-`Receiver::recv_batch_timeout` to receive data, awaiting up to a 
-completion of a provided future, such as a delay or a channel. Here is an 
+queue, you can use `Receiver::recv_timeout` and
+`Receiver::recv_batch_timeout` to receive data, awaiting up to a
+completion of a provided future, such as a delay or a channel. Here is an
 example:
 ```rust
-use yaque::{channel, try_clear};
+use yaque::channel;
 use std::time::Duration;
 use futures_timer::Delay;
 
 futures::executor::block_on(async {
-    let (mut sender, mut receiver) = channel("data/my-queue").unwrap();
+    let (mut sender, mut receiver) = channel("data/my-queue-2").unwrap();
     
     // receive some data up to a second
     let data = receiver
@@ -107,9 +107,10 @@ futures::executor::block_on(async {
 
     // Nothing was sent, so no data...
     assert!(data.is_none());
-
+    drop(data);
+    
     // ... but if you do send something...
-    sender.send(b"some data").unwrap();
+    sender.send(b"some data").await.unwrap();
  
     // ... now you receive something:
     let data = receiver
@@ -118,62 +119,73 @@ futures::executor::block_on(async {
         .unwrap();
 
     assert_eq!(&*data.unwrap(), b"some data");  
-
-    data.commit();
 });
 ```
 
 ## `Ctrl+C` and other unexpected events
 
-During some anomalous behavior, the queue might enter an inconsistent state.
-This inconsistency is mainly related to the position of the sender and of
-the receiver in the queue. Writing to the queue is an atomic operation.
+First of all, "Don't panic©"! Writing to the queue is an atomic operation.
 Therefore, unless there is something really wrong with your OS, you should be
-fine.
+fine in terms of data corruption most of the time.
 
-The queue is (almost) guaranteed to save all the most up-to-date metadata
-for both receiving and sending parts during a panic. The only exception is
-if the saving operation fails. However, this is not the case if the process
-receives a signal from the OS. Signals from the OS are not handled
-automatically by this library. It is understood that the application
+In case of a panic (the program's, not the programmer's), the queue is
+guaranteed to save all the most up-to-date metadata for the receiver. For
+the reader it is even simpler: there is nothing to be saved in the first
+place. The only exception to this guarantee is if the saving operation fails
+due to an IO error. Remember that the program is not allowed to panic during
+a panic. Therefore in this case, `yaque` will not attempt to recover from an
+error.
+
+The same thing cannot be said from OS signals. Signals from the OS are *not*
+handled automatically by this library. It is understood that the application
 programmer knows best how to handle them. If you chose to close queue on
-`Ctrl+C` or other signals, you are in luckSaving both sides of the queue
+`Ctrl+C` or other signals, you are in luck! Saving both sides of the queue
 is [async-signal-safe](https://man7.org/linux/man-pages/man7/signal-safety.7.html)
 so you may set up a bare signal hook directly using, for example,
-[`signal_hook`](https://docs.rs/signal-hook/), if you are the sort of person
+`signal_hook`(https://docs.rs/signal-hook/), if you are the sort of person
 that enjoys `unsafe` code. If not, there are a ton of completely safe
 alternatives out there. Choose the one that suits you the best.
 
-Unfortunately, there are times when you get `Aborted` or `Killed`. When this
-happens, maybe not everything is lost yet. First of all, you will end up
-with a queue that is locked by no process. If you know that the process
-owning the locks has indeed past away, you may safely delete the lock files
-identified by the `.lock` extension. You will also end up with queue
-metadata pointing to an earlier state in time. Is is easy to guess what the
-sending metadata should be. Is is the top of the last segment file. However,
-things get trickier in the receiver side. You know that it is the greatest
-of two positions:
+Unfortunately, there are also times when you get `aborted` or `killed`. These
+signals cannot be handled by any library whatsoever. When this happens, not
+everything is lost yet. We provied a whole module, `recovery`,
+to aid you in automatic queue recovery. Please check the module for the
+specific function names. From an architectural perspective, we offer two
+different approaches to queue recovery, which may be suitable to different
+use cases:
 
-1. the bottom of the smallest segment still present in the directory.
+1. Recover with replay (the standard): we can reconstruct a _lower bound_
+of the actual state of the queue during the crash, which consists of the
+_maximum_ of the following two positions:
+    * the bottom of the smallest segment still present in the directory.
+    * the position indicated in the metadata file.
 
-2. the position indicated in the metadata file.
+Since this is a lower bound, some elements may be replayed. If your
+processing is _idempotent_, this will not be an issue and you lose no data
+whatsoever.
 
-Depending on your use case, this might be information enough so that not all
-hope is lost. However, this is all you will get.
+2. Recover with loss: we can also reconstruct an _upper bound_ for the
+actual state of the queue: the bottom of the second smallest segment in
+the queue. In this case, the smallest segment is simply erased and the
+receiver caries on as if nothing has happened. If replays are intollerable,
+but some data loss is, this might be the right alternative for you. You can
+limit data loss by constraining the segment size, configuring this option on
+`SenderBuilder`.
 
-If you really want to err on the safer side, you may use `Sender::save`
-and `Receiver::save` to periodically back the queue state up. Just choose
-you favorite timer implementation and set a simple periodical task up every
-hundreds of milliseconds. However, be warned that this is only a _mitigation_
-of consistency problems, not a solution.
+If you really want to err on the safer side, you may use `Receiver::save`
+to periodically back the receiver state up. Just choose you favorite timer
+implementation and set a simple periodical task up every hundreds of milliseconds.
+However, be warned that this is only a _mitigation_ of consistency problems, not
+a solution.
 
 ## Known issues and next steps
 
-* This is a brand new project. Although I have tested it and it will
-certainly not implode your computer, don't trust your life on it yet.
+* ~~This is a brand new project. Although I have tested it and it will
+certainly not implode your computer, don't trust your life on it yet.~~ This code
+is running in production for non-critical applications.
 * Wastes too much kernel time when the queue is small enough and the sender
 sends many frequent small messages non-atomically. You can mitigate that by
 writing in batches to the queue.
 * There are probably unknown bugs hidden in some corner case. If you find
-one, please fill an issue in GitHub. Pull requests and contributions are
-also greatly appreciated.
+one, please [fill an issue on GitHub](https://github.com/tokahuke/yaque/issues/new).
+Pull requests and contributions are also greatly appreciated.

@@ -79,3 +79,22 @@ is only supported within the same _minor_ version.
 ## Version 0.5.1:
 
 * Corrected a bug on the `send_metadata` inferrence thingy. Now, all tests are passing.
+
+## Version 0.6.0:
+
+* Changed in-disk format again. This time, things are woefully incompatible. Don't use
+a `<0.5.1` queue with `0.6.0`. You will fail miserably. The difference that breaks
+compatibility is one extra parity bit flag in the item header. Before `0.6.0`, it was
+used to ensure "legacy mode", where no parity checking took place. Now, it is a parity
+bit all on itself. This leads to much more robust error detection (up to 2bits,
+guaranteed, but you can get lucky with more!).
+* Now you can control the sender more finely with `SenderBuilder`. This includes
+chosing a segment size that fits your needs and chosing the "maximum size" for the
+queue.
+* And yes, now you can control maximum queue size so that `yaque` doesn't blow up your
+hard drive. This means that some major API changes took place:
+    * `Sender::send` becomes `Sender::try_send` and returns a `TrySendError`. The same
+    thing happens to `Sender::send_batch`.
+    * A _new_ method called `Sender::send` is created that works like good old
+    `Sender::send`, except that it is async and `.await`s for the queue to shrink
+    below the maximum size. The same thing happens to `Sender::send_batch`.

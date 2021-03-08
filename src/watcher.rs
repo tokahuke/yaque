@@ -1,3 +1,6 @@
+//! Watcher implementations for specific events on the queue directory. This is the interface with
+//! the `inotify` API.
+
 use notify::event::{Event, EventKind, ModifyKind};
 use notify::{RecommendedWatcher, Watcher};
 use std::path::Path;
@@ -74,6 +77,38 @@ where
             path.as_ref().parent().expect("file must have parent"),
             notify::RecursiveMode::NonRecursive,
         )
+        .expect("could not start watching file");
+
+    watcher
+}
+
+/// Watches *any* removal in a given path.
+pub(crate) fn removal_watcher<P>(path: P, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
+where
+    P: AsRef<Path>,
+{
+    // Set up watcher:
+    let mut watcher =
+        notify::immediate_watcher(move |maybe_event: notify::Result<notify::Event>| {
+            match maybe_event.expect("received error from watcher") {
+                Event {
+                    kind: EventKind::Remove(_),
+                    ..
+                } => {
+                    waker
+                        .lock()
+                        .expect("waker poisoned")
+                        .take()
+                        .map(|waker: Waker| waker.wake());
+                }
+                _ => {}
+            }
+        })
+        .expect("could not create watcher");
+
+    // Put watcher to run:
+    watcher
+        .watch(path, notify::RecursiveMode::NonRecursive)
         .expect("could not start watching file");
 
     watcher

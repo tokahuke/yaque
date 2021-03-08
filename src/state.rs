@@ -8,9 +8,6 @@ use std::path::{Path, PathBuf};
 /// The internal state of one side of the queue.
 #[derive(Debug, PartialEq)]
 pub struct QueueState {
-    /// The minimum size of a queue segment. Normally, this will be very near
-    /// the final size of the segment if the elements are small enough.
-    pub segment_size: u64,
     /// The number of the actual segment.
     pub segment: u64,
     /// The byte position within the segment (the position that can be reached
@@ -21,7 +18,6 @@ pub struct QueueState {
 impl Default for QueueState {
     fn default() -> QueueState {
         QueueState {
-            segment_size: 1024 * 1024 * 4, // 4MB
             segment: 0,
             position: 0,
         }
@@ -30,9 +26,7 @@ impl Default for QueueState {
 
 impl PartialOrd for QueueState {
     fn partial_cmp(&self, other: &QueueState) -> Option<Ordering> {
-        if self.segment_size != other.segment_size {
-            None
-        } else if self.segment > other.segment {
+        if self.segment > other.segment {
             Some(Ordering::Greater)
         } else if self.segment < other.segment {
             Some(Ordering::Less)
@@ -121,11 +115,6 @@ impl QueueState {
     pub fn advance_position(&mut self, offset: u64) {
         self.position += offset;
     }
-
-    /// Test if position is past the end of the segment.
-    pub fn is_past_end(&self) -> bool {
-        self.position > self.segment_size
-    }
 }
 
 /// An implementation of persistence using the filesystem itself.
@@ -159,7 +148,6 @@ impl QueueStatePersistence {
                 };
 
                 Ok(QueueState {
-                    segment_size: read_u64()?,
                     segment: read_u64()?,
                     position: read_u64()?,
                 })
@@ -177,7 +165,6 @@ impl QueueStatePersistence {
                 .expect("save should be called *after* open"),
         )?);
 
-        file.write_all(&queue_state.segment_size.to_be_bytes())?;
         file.write_all(&queue_state.segment.to_be_bytes())?;
         file.write_all(&queue_state.position.to_be_bytes())?;
         file.flush()?;

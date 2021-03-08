@@ -11,7 +11,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
-use crate::watcher::{file_removal_watcher, file_watcher};
+use crate::watcher::{file_removal_watcher, file_watcher, removal_watcher};
 
 lazy_static! {
     /// A unique token to differentiate between processes wich might have the
@@ -279,6 +279,36 @@ impl<'a> Drop for ReadExact<'a> {
     fn drop(&mut self) {
         if !self.was_polled {
             log::warn!("read_exact future never polled");
+        }
+    }
+}
+
+/// A future that resolves every time that a file is deleted in a directory. This
+/// future can be polled over and over again to make a stream of deletions.
+pub struct DeletionEvent {
+    waker: Arc<Mutex<Option<Waker>>>,
+    _watcher: RecommendedWatcher,
+}
+
+impl Future for DeletionEvent {
+    type Output = ();
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        // Set the waker in the file watcher:
+        let mut lock = self.waker.lock().expect("waker mutex poisoned");
+        *lock = Some(context.waker().clone());
+
+        Poll::Ready(())
+    }
+}
+
+impl DeletionEvent {
+    pub fn new<P: AsRef<Path>>(base: P) -> DeletionEvent {
+        let waker = Arc::new(Mutex::new(None));
+        let watcher = removal_watcher(base, Arc::clone(&waker));
+
+        DeletionEvent {
+            waker,
+            _watcher: watcher,
         }
     }
 }
