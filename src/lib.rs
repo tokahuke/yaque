@@ -181,6 +181,7 @@ mod header;
 mod state;
 mod sync;
 mod watcher;
+mod error;
 
 pub mod mutex;
 pub mod queue;
