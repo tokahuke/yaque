@@ -6,6 +6,7 @@ use std::io::{self};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
+use crate::version::{check_queue_version};
 use crate::header::Header;
 use crate::state::QueueState;
 use crate::state::QueueStatePersistence;
@@ -69,6 +70,9 @@ impl Receiver {
         create_dir_all(base.as_ref())?;
 
         log::trace!("created queue directory");
+
+        // Versioning stuff (this should be lightning-fast. Therefore, shameless block):
+        check_queue_version(base.as_ref())?;
 
         // Acquire guard and state:
         let file_guard = try_acquire_recv_lock(base.as_ref())?;

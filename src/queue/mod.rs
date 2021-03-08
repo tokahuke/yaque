@@ -496,7 +496,9 @@ mod tests {
             }
         }
 
-        let size = get_queue_size("data/max-queue-size-with-drain").unwrap().in_bytes;
+        let size = get_queue_size("data/max-queue-size-with-drain")
+            .unwrap()
+            .in_bytes;
         assert!(
             size >= 2048,
             "size was {}; should be at least {}",
@@ -551,7 +553,8 @@ mod tests {
             let dequeue = std::thread::spawn(move || {
                 futures::executor::block_on(async {
                     let mut receiver =
-                        Receiver::open("data/enqueue-dequeue-parallel-with-max-queue-size").unwrap();
+                        Receiver::open("data/enqueue-dequeue-parallel-with-max-queue-size")
+                            .unwrap();
                     let dataset_iter = arc_receiver.iter();
                     let mut i = 0u64;
 
@@ -569,7 +572,7 @@ mod tests {
 
             try_clear("data/enqueue-dequeue-parallel-with-max-queue-size").unwrap();
         }
-        
+
         test(2 * 1024 * 1024); // smaller than segment
         test(4 * 1024 * 1024); // equal to segment
         test(8 * 1024 * 1024); // bigger than segment
@@ -578,14 +581,12 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_small_queue_size() {
-        SenderBuilder::new()
-            .max_queue_size(Some(0));
+        SenderBuilder::new().max_queue_size(Some(0));
     }
 
     #[test]
     #[should_panic]
     fn test_small_segment_size() {
-        SenderBuilder::new()
-            .segment_size(0);
+        SenderBuilder::new().segment_size(0);
     }
 }

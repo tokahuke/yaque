@@ -29,11 +29,13 @@
 //! })
 //! ```
 //! You can also use [`Sender::open`] and [`Receiver::open`] to open only one
-//! half of the channel, if you need to.
+//! half of the channel, if you need to. You can also use [`SenderBuilder`]
+//! to instantiate a customized sender.
 //!
 //! The usage is similar to the MPSC channel in the standard library, except
-//! that the receiving method, [`Receiver::recv`] is asynchronous. Writing to
-//! the queue with the sender is basically lock-free and atomic.
+//! that the sending and receiving methods, [`Sender::send`] and [`Receiver::recv`]
+//!  are asynchronous. Writing to the queue with the sender is mostly lock-free,
+//! but might lock if you limit queue size.
 //! ```rust
 //! use yaque::{channel, queue::try_clear};
 //!
@@ -135,7 +137,7 @@
 //! due to an IO error. Remember that the program is not allowed to panic during
 //! a panic. Therefore in this case, `yaque` will not attempt to recover from an
 //! error.
-//! 
+//!
 //! The same thing cannot be said from OS signals. Signals from the OS are *not*
 //! handled automatically by this library. It is understood that the application
 //! programmer knows best how to handle them. If you chose to close queue on
@@ -153,17 +155,17 @@
 //! specific function names. From an architectural perspective, we offer two
 //! different approaches to queue recovery, which may be suitable to different
 //! use cases:
-//! 
+//!
 //! 1. Recover with replay (the standard): we can reconstruct a _lower bound_
 //! of the actual state of the queue during the crash, which consists of the
 //! _maximum_ of the following two positions:
 //!     * the bottom of the smallest segment still present in the directory.
 //!     * the position indicated in the metadata file.
-//! 
+//!
 //! Since this is a lower bound, some elements may be replayed. If your
 //! processing is _idempotent_, this will not be an issue and you lose no data
 //! whatsoever.
-//! 
+//!
 //! 2. Recover with loss: we can also reconstruct an _upper bound_ for the
 //! actual state of the queue: the bottom of the second smallest segment in
 //! the queue. In this case, the smallest segment is simply erased and the
@@ -171,7 +173,7 @@
 //! but some data loss is, this might be the right alternative for you. You can
 //! limit data loss by constraining the segment size, configuring this option on
 //! [`SenderBuilder`].
-//! 
+//!
 //! If you really want to err on the safer side, you may use [`Receiver::save`]
 //! to periodically back the receiver state up. Just choose you favorite timer
 //! implementation and set a simple periodical task up every hundreds of milliseconds.
@@ -189,12 +191,13 @@
 //! * There are probably unknown bugs hidden in some corner case. If you find
 //! one, please [fill an issue on GitHub](https://github.com/tokahuke/yaque/issues/new).
 //! Pull requests and contributions are also greatly appreciated.
-//! 
+//!
 
 mod error;
 mod header;
 mod state;
 mod sync;
+mod version;
 mod watcher;
 
 pub mod mutex;

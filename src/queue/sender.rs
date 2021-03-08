@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 
+use crate::version::{check_queue_version};
 use crate::error::TrySendError;
 use crate::header::Header;
 use crate::state::QueueState;
@@ -54,7 +55,10 @@ pub(crate) fn get_queue_size<P: AsRef<Path>>(base: P) -> io::Result<QueueSize> {
         }
     }
 
-    Ok(QueueSize { in_bytes, in_segments })
+    Ok(QueueSize {
+        in_bytes,
+        in_segments,
+    })
 }
 
 /// A builder for the sender side of the queue. Use this if you want to have fine-grained control
@@ -116,7 +120,7 @@ impl SenderBuilder {
     ///
     /// This value will be ignored if the queue has only one segment, since the queue would
     /// deadlock otherwise. It is recomended that you set `max_queue_size >> segment_size`.
-    /// 
+    ///
     /// Default value: `None`
     ///
     /// # Panics
@@ -141,6 +145,9 @@ impl SenderBuilder {
         create_dir_all(base.as_ref())?;
 
         log::trace!("created queue directory");
+
+        // Versioning stuff (this should be lightning-fast. Therefore, shameless block):
+        check_queue_version(base.as_ref())?;
 
         // Acquire lock and guess statestate:
         let file_guard = try_acquire_send_lock(base.as_ref())?;

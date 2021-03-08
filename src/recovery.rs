@@ -4,17 +4,17 @@
 //!
 //! We offer two different approaches to queue recovery, which may be suitable to
 //! different use cases:
-//! 
+//!
 //! 1. Recover with replay (the standard): we can reconstruct a _lower bound_
 //! of the actual state of the queue during the crash, which consists of the
 //! _maximum_ of the following two positions:
 //!     * the bottom of the smallest segment still present in the directory.
 //!     * the position indicated in the metadata file.
-//! 
+//!
 //! Since this is a lower bound, some elements may be replayed. If your
 //! processing is _idempotent_, this will not be an issue and you lose no data
 //! whatsoever.
-//! 
+//!
 //! 2. Recover with loss: we can also reconstruct an _upper bound_ for the
 //! actual state of the queue: the bottom of the second smallest segment in
 //! the queue. In this case, the smallest segment is simply erased and the
@@ -33,7 +33,7 @@ use super::state::{QueueState, QueueStatePersistence};
 use super::sync::{FileGuard, UNIQUE_PROCESS_TOKEN};
 
 /// Unlocks a `.lock` file if the owning process does not exist anymore. This
-/// function does nothing if the file does not exist. 
+/// function does nothing if the file does not exist.
 ///
 /// # Panics
 ///
@@ -259,8 +259,8 @@ pub fn guess_recv_metadata_with_loss<P: AsRef<Path>>(base: P) -> io::Result<()> 
     Ok(())
 }
 
-/// Recovers a queue using the "with replay" strategy. 
-/// 
+/// Recovers a queue using the "with replay" strategy.
+///
 /// It applies the following operations, in this order:
 /// * Unlocks both the sender and receiver side of the queue.
 /// * Guesses the position of the receiver using [`guess_recv_metadata`] (this
@@ -287,7 +287,7 @@ pub fn recover<P: AsRef<Path>>(base: P) -> io::Result<()> {
 }
 
 /// Recovers a queue using the "with loss" strategy.
-/// 
+///
 /// It applies the following operations, in this order:
 /// * Unlocks both the sender and receiver side of the queue.
 /// * Guesses the position of the receiver using [`guess_recv_metadata_with_loss`]

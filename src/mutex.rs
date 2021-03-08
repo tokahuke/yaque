@@ -17,12 +17,12 @@ pub struct Mutex {
 }
 
 impl Mutex {
-    /// Opens a new mutex, given the path for a folder in which the mutes will be mounted.
+    /// Opens a new mutex, given the path for a folder in which the mutex will be mounted.
     /// This will create a new floder if one does not exist yet.
     ///
     /// # Errors
     ///
-    /// This function fails if it fcannot create the folder which is giong to contain the
+    /// This function fails if it cannot create the folder which is giong to contain the
     /// mutex.
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Mutex> {
         fs::create_dir_all(&path)?;
@@ -44,6 +44,26 @@ impl Mutex {
             _file_guard: file_guard,
             file,
         })
+    }
+
+    /// Tries to lock this mutex, returnin `None` if it is locked.
+    pub fn try_lock(&self) -> io::Result<Option<MutexGuard>> {
+        let file_guard = FileGuard::try_lock(self.path.join("lock"))?;
+
+        if let Some(file_guard) = file_guard {
+            let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(self.path.join("contents"))?;
+
+            Ok(Some(MutexGuard {
+                _file_guard: file_guard,
+                file,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -93,7 +113,10 @@ mod test {
 
             let guard = mutex.lock().await.unwrap();
 
-            assert_eq!(String::from_utf8_lossy(&*guard.read().unwrap()), String::from_utf8_lossy(b"some data"));
+            assert_eq!(
+                String::from_utf8_lossy(&*guard.read().unwrap()),
+                String::from_utf8_lossy(b"some data")
+            );
         });
     }
 
