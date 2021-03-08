@@ -177,15 +177,16 @@
 //! one, please fill an issue in GitHub. Pull requests and contributions are
 //! also greatly appreciated.
 
+mod error;
 mod header;
 mod state;
 mod sync;
 mod watcher;
-mod error;
 
 pub mod mutex;
 pub mod queue;
 #[cfg(feature = "recovery")]
 pub mod recovery;
 
+pub use error::TrySendError;
 pub use queue::{channel, Receiver, Sender};

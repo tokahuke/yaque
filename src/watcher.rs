@@ -79,7 +79,6 @@ where
     watcher
 }
 
-
 /// Watches *any* removal in a given path.
 pub(crate) fn removal_watcher<P>(path: P, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
 where
@@ -106,15 +105,11 @@ where
 
     // Put watcher to run:
     watcher
-        .watch(
-            path,
-            notify::RecursiveMode::NonRecursive,
-        )
+        .watch(path, notify::RecursiveMode::NonRecursive)
         .expect("could not start watching file");
 
     watcher
 }
-
 
 /// Watches a file for changes in its content.
 pub(crate) fn file_watcher<P>(path: P, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher

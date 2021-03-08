@@ -1,12 +1,12 @@
 use std::fs::*;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
 use std::num::NonZeroU64;
+use std::path::{Path, PathBuf};
 
+use crate::error::TrySendError;
 use crate::header::Header;
 use crate::state::QueueState;
-use crate::sync::{FileGuard, DeletionEvent};
-use crate::error::TrySendError;
+use crate::sync::{DeletionEvent, FileGuard};
 
 use super::{segment_filename, HEADER_EOF};
 
@@ -33,7 +33,6 @@ pub(crate) async fn acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<Fil
     FileGuard::lock(send_lock_filename(base.as_ref())).await
 }
 
-
 /// Non-recursively get the directory size of a given path.
 fn get_dir_size<P: AsRef<Path>>(base: P) -> io::Result<u64> {
     let mut total = 0;
@@ -46,12 +45,11 @@ fn get_dir_size<P: AsRef<Path>>(base: P) -> io::Result<u64> {
     Ok(total)
 }
 
-
 pub struct SenderBuilder {
-    /// The segment size in bytes that will trigger a new segment to be created. Segments an be 
-    /// bigger than this to accomodate the last element, but nothing beyond that (each segment 
+    /// The segment size in bytes that will trigger a new segment to be created. Segments an be
+    /// bigger than this to accomodate the last element, but nothing beyond that (each segment
     /// must store at least one element).
-    /// 
+    ///
     /// Default value: 4MB
     max_segment_size: NonZeroU64,
 
@@ -59,11 +57,11 @@ pub struct SenderBuilder {
     /// catches up, deleting old segments). The queue can get bigger than that, but only to
     /// accomodate the last segment (the queue must have at least one segment). Set this to `None`
     /// to create an unbounded queue.
-    /// 
+    ///
     /// Small detail: "queue size" is defined here as the total size of the base directory
     /// (non-recursive). Therefore, metadata is included in the queue size as well as any spurious
     /// files that may appear (who knows?) in the base folder. Sub-folders, however, don't count.
-    /// 
+    ///
     /// Default value: None
     max_queue_size: Option<NonZeroU64>,
 }
@@ -83,14 +81,14 @@ impl SenderBuilder {
         SenderBuilder::default()
     }
 
-    /// The segment size in bytes that will trigger a new segment to be created. Segments an be 
-    /// bigger than this to accomodate the last element, but nothing beyond that (each segment 
+    /// The segment size in bytes that will trigger a new segment to be created. Segments an be
+    /// bigger than this to accomodate the last element, but nothing beyond that (each segment
     /// must store at least one element).
-    /// 
+    ///
     /// Default value: 4MB
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This function panics if `size` is zero.
     pub fn max_segment_size(mut self, size: u64) -> SenderBuilder {
         let size = NonZeroU64::new(size).expect("got max_segment_size=0");
@@ -102,15 +100,15 @@ impl SenderBuilder {
     /// catches up, deleting old segments). The queue can get bigger than that, but only to
     /// accomodate the last segment (the queue must have at least one segment). Set this to `None`
     /// to create an unbounded queue.
-    /// 
+    ///
     /// Small detail: "queue size" is defined here as the total size of the base directory
     /// (non-recursive). Therefore, metadata is included in the queue size as well as any spurious
     /// files that may appear (who knows?) in the base folder. Sub-folders, however, don't count.
-    /// 
+    ///
     /// Default value: None
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This function panics if `size` is zero.
     pub fn max_queue_size(mut self, size: Option<u64>) -> SenderBuilder {
         let size = size.map(|s| NonZeroU64::new(s).expect("got max_queue_size=0"));
@@ -233,7 +231,7 @@ impl Sender {
                 return Ok(false);
             }
         }
-        
+
         // Write EOF header:
         self.file.write(&HEADER_EOF)?;
         self.file.flush()?;
@@ -252,7 +250,10 @@ impl Sender {
         if self.is_past_end() {
             // If so, create a new file, if you are able to:
             if !self.try_cap_off_and_move()? {
-                return Err(TrySendError::QueueFull { item, queue_name: format!("{:?}", self.base) });
+                return Err(TrySendError::QueueFull {
+                    item,
+                    queue_name: format!("{:?}", self.base),
+                });
             }
         }
 
@@ -297,7 +298,7 @@ impl Sender {
     ///
     /// This function returns any underlying errors encountered while writing or
     /// flushing the queue.
-    /// 
+    ///
     pub async fn send<D: AsRef<[u8]>>(&mut self, mut data: D) -> io::Result<()> {
         loop {
             match self.try_send(data) {
@@ -346,7 +347,7 @@ impl Sender {
     where
         I: IntoIterator,
         I::Item: AsRef<[u8]>,
-    {       
+    {
         loop {
             match self.try_send_batch(it) {
                 Ok(()) => break Ok(()),

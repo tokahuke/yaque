@@ -11,7 +11,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
-use crate::watcher::{file_removal_watcher, removal_watcher, file_watcher};
+use crate::watcher::{file_removal_watcher, file_watcher, removal_watcher};
 
 lazy_static! {
     /// A unique token to differentiate between processes wich might have the
@@ -296,7 +296,7 @@ impl Future for DeletionEvent {
         // Set the waker in the file watcher:
         let mut lock = self.waker.lock().expect("waker mutex poisoned");
         *lock = Some(context.waker().clone());
-        
+
         Poll::Ready(())
     }
 }
@@ -306,6 +306,9 @@ impl DeletionEvent {
         let waker = Arc::new(Mutex::new(None));
         let watcher = removal_watcher(base, Arc::clone(&waker));
 
-        DeletionEvent { waker, _watcher: watcher }
+        DeletionEvent {
+            waker,
+            _watcher: watcher,
+        }
     }
 }

@@ -1,20 +1,20 @@
 //! Queue implementation and utility functions.
 
-mod sender;
 mod receiver;
+mod sender;
 
-pub use sender::{Sender, SenderBuilder};
 pub use receiver::{Receiver, RecvGuard};
+pub use sender::{Sender, SenderBuilder};
 
-pub(crate) use sender::send_lock_filename;
 pub(crate) use receiver::recv_lock_filename;
+pub(crate) use sender::send_lock_filename;
 
 use std::fs::*;
 use std::io::{self};
 use std::path::{Path, PathBuf};
 
-use sender::{try_acquire_send_lock, acquire_send_lock};
-use receiver::{try_acquire_recv_lock, acquire_recv_lock};
+use receiver::{acquire_recv_lock, try_acquire_recv_lock};
+use sender::{acquire_send_lock, try_acquire_send_lock};
 
 /// The name of segment file in the queue folder.
 fn segment_filename<P: AsRef<Path>>(base: P, segment: u64) -> PathBuf {

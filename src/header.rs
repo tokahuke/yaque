@@ -34,9 +34,7 @@ impl Header {
             len
         );
 
-        Header {
-            len,
-        }
+        Header { len }
     }
 
     pub fn len(&self) -> u32 {
