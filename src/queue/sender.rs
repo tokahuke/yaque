@@ -34,7 +34,7 @@ pub(crate) async fn acquire_send_lock<P: AsRef<Path>>(base: P) -> io::Result<Fil
 }
 
 /// Non-recursively get the directory size of a given path.
-fn get_dir_size<P: AsRef<Path>>(base: P) -> io::Result<u64> {
+pub(crate) fn get_dir_size<P: AsRef<Path>>(base: P) -> io::Result<u64> {
     let mut total = 0;
 
     for dir_entry in read_dir(base.as_ref())? {
@@ -51,7 +51,7 @@ pub struct SenderBuilder {
     /// must store at least one element).
     ///
     /// Default value: 4MB
-    max_segment_size: NonZeroU64,
+    segment_size: NonZeroU64,
 
     /// The queue size that will block the sender from creating a new segment (until the receiver
     /// catches up, deleting old segments). The queue can get bigger than that, but only to
@@ -69,7 +69,7 @@ pub struct SenderBuilder {
 impl Default for SenderBuilder {
     fn default() -> SenderBuilder {
         SenderBuilder {
-            max_segment_size: NonZeroU64::new(1024 * 1024 * 4).expect("impossible"), // 4MB
+            segment_size: NonZeroU64::new(1024 * 1024 * 4).expect("impossible"), // 4MB
             max_queue_size: None,
         }
     }
@@ -90,9 +90,9 @@ impl SenderBuilder {
     /// # Panics
     ///
     /// This function panics if `size` is zero.
-    pub fn max_segment_size(mut self, size: u64) -> SenderBuilder {
-        let size = NonZeroU64::new(size).expect("got max_segment_size=0");
-        self.max_segment_size = size;
+    pub fn segment_size(mut self, size: u64) -> SenderBuilder {
+        let size = NonZeroU64::new(size).expect("got segment_size=0");
+        self.segment_size = size;
         self
     }
 
@@ -147,7 +147,7 @@ impl SenderBuilder {
         log::trace!("last segment opened for appending");
 
         Ok(Sender {
-            max_segment_size: self.max_segment_size,
+            segment_size: self.segment_size,
             max_queue_size: self.max_queue_size,
             _file_guard: file_guard,
             file,
@@ -161,7 +161,7 @@ impl SenderBuilder {
 /// The sender part of the queue. This part is lock-free and therefore can be
 /// used outside an asynchronous context.
 pub struct Sender {
-    max_segment_size: NonZeroU64,
+    segment_size: NonZeroU64,
     max_queue_size: Option<NonZeroU64>,
     _file_guard: FileGuard,
     file: io::BufWriter<File>,
@@ -218,7 +218,7 @@ impl Sender {
 
     /// Tests whether the queue is past the end of the current segment.
     fn is_past_end(&self) -> bool {
-        self.state.position > self.max_segment_size.get()
+        self.state.position > self.segment_size.get()
     }
 
     /// Caps off a segment by writing an EOF header and then moves segment.
@@ -227,10 +227,19 @@ impl Sender {
     #[must_use = "you need to always check if a segment was created or not!"]
     fn try_cap_off_and_move(&mut self) -> io::Result<bool> {
         if let Some(max_queue_size) = self.max_queue_size {
-            if get_dir_size(&self.base)? >= max_queue_size.get() {
+            let dir_size = get_dir_size(&self.base)?;
+
+            if dir_size >= max_queue_size.get() {
+                log::trace!(
+                    "oops! Directory size is {}, but max queue size is {}",
+                    dir_size,
+                    max_queue_size.get()
+                );
                 return Ok(false);
             }
         }
+
+        log::trace!("there is enough space for a new segment. Let's cap off and move on!");
 
         // Write EOF header:
         self.file.write(&HEADER_EOF)?;
@@ -248,8 +257,15 @@ impl Sender {
     fn maybe_cap_off_and_move<T>(&mut self, item: T) -> Result<T, TrySendError<T>> {
         // See if you are past the end of the file
         if self.is_past_end() {
+            log::trace!("is past the segment end. Trying to cap off and move");
+
             // If so, create a new file, if you are able to:
             if !self.try_cap_off_and_move()? {
+                log::trace!(
+                    "could not capp off and move. The queue `{:?}` is full",
+                    self.base
+                );
+
                 return Err(TrySendError::QueueFull {
                     item,
                     base: self.base.clone(),
@@ -343,6 +359,17 @@ impl Sender {
         Ok(())
     }
 
+    /// Sends all the contents of an iterable into the queue. This function is
+    /// `async` because the queue might be full and so we need to `.await` the
+    /// receiver to consume enough segments to clear the queue. All is buffered
+    /// to be sent atomically, in one flush operation. Since this operation is
+    /// atomic, it does not create new segments during the iteration. Be
+    /// mindful of that when using this method for large writes.
+    ///
+    /// # Errors
+    ///
+    /// This function returns any underlying errors encountered while writing or
+    /// flushing the queue.
     pub async fn send_batch<I>(&mut self, mut it: I) -> io::Result<()>
     where
         I: IntoIterator,

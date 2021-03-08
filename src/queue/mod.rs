@@ -87,11 +87,16 @@ fn init_log() {
 mod tests {
     use super::*;
 
+    use futures::future::Either;
     use futures_timer::Delay;
     use rand::{Rng, SeedableRng};
     use rand_xorshift::XorShiftRng;
     use std::sync::Arc;
     use std::time::Duration;
+
+    use crate::error::TrySendError;
+
+    use self::sender::get_dir_size;
 
     fn data_lots_of_data() -> impl Iterator<Item = Vec<u8>> {
         let mut rng = XorShiftRng::from_rng(rand::thread_rng()).expect("can init");
@@ -188,12 +193,14 @@ mod tests {
         let arc_sender = Arc::new(dataset);
         let arc_receiver = arc_sender.clone();
 
-        // Enqueue:
+        // Enqueue (let's test async send!):
         let enqueue = std::thread::spawn(move || {
-            let mut sender = Sender::open("data/enqueue-dequeue-parallel").unwrap();
-            for data in &*arc_sender {
-                sender.try_send(data).unwrap();
-            }
+            futures::executor::block_on(async {
+                let mut sender = Sender::open("data/enqueue-dequeue-parallel").unwrap();
+                for data in &*arc_sender {
+                    sender.send(data).await.unwrap();
+                }
+            });
         });
 
         // Dequeue:
@@ -441,5 +448,122 @@ mod tests {
                 &[b"0", b"1", b"2"]
             );
         });
+    }
+
+    #[test]
+    fn test_max_queue_size() {
+        let mut sender = SenderBuilder::new()
+            .max_queue_size(Some(2048))
+            .segment_size(512)
+            .open("data/max-queue-size")
+            .unwrap();
+        let mut data = data_lots_of_data();
+
+        loop {
+            let item = data.next().unwrap();
+            match sender.try_send(&item) {
+                Ok(_) => {}
+                Err(TrySendError::Io(err)) => Err(err).unwrap(),
+                Err(TrySendError::QueueFull { .. }) => break,
+            }
+        }
+
+        let size = get_dir_size("data/max-queue-size").unwrap();
+        assert!(
+            size >= 2048,
+            "size was {}; should be at least {}",
+            size,
+            2048
+        );
+    }
+
+    #[test]
+    fn test_max_queue_size_with_drain() {
+        let mut sender = SenderBuilder::new()
+            .max_queue_size(Some(2048))
+            .segment_size(512)
+            .open("data/max-queue-size-with-drain")
+            .unwrap();
+        let mut receiver = Receiver::open("data/max-queue-size-with-drain").unwrap();
+        let mut data = data_lots_of_data();
+
+        loop {
+            let item = data.next().unwrap();
+            match sender.try_send(&item) {
+                Ok(_) => {}
+                Err(TrySendError::Io(err)) => Err(err).unwrap(),
+                Err(TrySendError::QueueFull { .. }) => break,
+            }
+        }
+
+        let size = get_dir_size("data/max-queue-size-with-drain").unwrap();
+        assert!(
+            size >= 2048,
+            "size was {}; should be at least {}",
+            size,
+            2048
+        );
+
+        // Drain queue:
+        futures::executor::block_on(async {
+            loop {
+                match futures::future::select(Box::pin(receiver.recv()), Box::pin(async {})).await {
+                    Either::Left((outcome, _)) => {
+                        let outcome = outcome.unwrap();
+                        outcome.commit();
+                    }
+                    Either::Right((_, _)) => {
+                        log::trace!("queue drained");
+                        break;
+                    }
+                };
+            }
+        });
+
+        for _ in 0..10 {
+            sender.try_send(data.next().unwrap()).unwrap();
+        }
+    }
+
+    /// Test enqueuing and dequeueing in parallel.
+    #[test]
+    fn test_enqueue_dequeue_parallel_with_max_queue_size() {
+        // Generate data:
+        let dataset = data_lots_of_data().take(100_000).collect::<Vec<_>>();
+        let arc_sender = Arc::new(dataset);
+        let arc_receiver = arc_sender.clone();
+
+        // Enqueue (let's test async send!):
+        let enqueue = std::thread::spawn(move || {
+            futures::executor::block_on(async {
+                let mut sender = SenderBuilder::new()
+                    .max_queue_size(Some(4 * 2 * 1024 * 1024))
+                    .open("data/enqueue-dequeue-parallel-with-max-queue-size")
+                    .unwrap();
+                for data in &*arc_sender {
+                    sender.send(data).await.unwrap();
+                }
+            });
+        });
+
+        // Dequeue:
+        let dequeue = std::thread::spawn(move || {
+            futures::executor::block_on(async {
+                let mut receiver =
+                    Receiver::open("data/enqueue-dequeue-parallel-with-max-queue-size").unwrap();
+                let dataset_iter = arc_receiver.iter();
+                let mut i = 0u64;
+
+                for should_be in dataset_iter {
+                    let data = receiver.recv().await.unwrap();
+                    assert_eq!(&*data, should_be, "at sample {}", i);
+                    i += 1;
+                    data.commit();
+                }
+            });
+        });
+
+        enqueue.join().expect("enqueue thread panicked");
+        dequeue.join().expect("dequeue thread panicked");
     }
 }
