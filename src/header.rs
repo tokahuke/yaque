@@ -1,31 +1,41 @@
-/// Hamming-encoded headers for the preppers. Reading a corrupted header can
-/// have devastating consequences. It is better to panic. And yes, this _has_
-/// happened in a real world scenario (SIGKILL).
+//! Hamming-encoded headers for the preppers. Reading a corrupted header can
+//! have devastating consequences. It is better to panic. And yes, this _has_
+//! happened in a real world scenario (SIGKILL).
+//!
+//! Here is how to generate the parity masks, in Python:
+//! ```python
+//! pow2 = {1, 2, 4, 8, 16, 32}
+//!
+//! for p in ( 2 ** k for k in range(6) ):
+//!     for i in list(range(1, 27))[::-1]: # arabic numerals...
+//!         if i not in pow2:
+//!             print(1 if i & p else 0, end="")
+//!     print()
+//! ```
+//! See [this section in Wikipedia](https://en.wikipedia.org/wiki/Hamming_code#General_algorithm).
 
-// generate the parity masks:
-// ```python
-// pow2 = {1, 2, 4, 8, 16, 32}
-//
-// for p in ( 2 ** k for k in range(6) ):
-//     for i in list(range(1, 27))[::-1]: # arabic numerals...
-//         if i not in pow2:
-//             print(1 if i & p else 0, end="")
-//     print()
-// ```
-// See: https://en.wikipedia.org/wiki/Hamming_code#General_algorithm
+/// Parity check mask.
 const P0: u32 = 0b11_1111_1111_1111_1111_1111_1111; // just a regular parity chech (not Hamming!)
+/// Hamming first parity bit mask.
 const P1: u32 = 0b10_1010_1010_1010_1101_0101_1011;
+/// Hamming second parity bit mask.
 const P2: u32 = 0b11_0011_0011_0011_0110_0110_1101;
+/// Hamming third parity bit mask.
 const P3: u32 = 0b11_1100_0011_1100_0111_1000_1110;
+/// Hamming fourth parity bit mask.
 const P4: u32 = 0b11_1111_1100_0000_0111_1111_0000;
+/// Hamming fifth parity bit mask.
 const P5: u32 = 0b11_1111_1111_1111_1000_0000_0000;
 
+/// A structure holding all the header info.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
+    /// The length of the payload.
     len: u32,
 }
 
 impl Header {
+    /// Creates a new [`Header`] from header info (just the length by now).
     pub fn new(len: u32) -> Header {
         // last 6bits clean or 26bit available ~= 67MB:
         assert!(
@@ -37,10 +47,12 @@ impl Header {
         Header { len }
     }
 
+    /// Gets the length of the payload.
     pub fn len(&self) -> u32 {
         self.len
     }
 
+    /// Encodes this header into the actual bits.
     pub fn encode(&self) -> [u8; 4] {
         let mut encoded = self.len;
 
@@ -55,6 +67,7 @@ impl Header {
         u32::to_be_bytes(encoded)
     }
 
+    /// Decodes a header from the actual bits.
     pub fn decode(header: [u8; 4]) -> Header {
         let encoded = u32::from_be_bytes(header);
 

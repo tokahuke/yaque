@@ -2,6 +2,27 @@
 //! effort" strategies. Use these functions if you need to automatically recover
 //! from a failure.
 //!
+//! We offer two different approaches to queue recovery, which may be suitable to
+//! different use cases:
+//! 
+//! 1. Recover with replay (the standard): we can reconstruct a _lower bound_
+//! of the actual state of the queue during the crash, which consists of the
+//! _maximum_ of the following two positions:
+//!     * the bottom of the smallest segment still present in the directory.
+//!     * the position indicated in the metadata file.
+//! 
+//! Since this is a lower bound, some elements may be replayed. If your
+//! processing is _idempotent_, this will not be an issue and you lose no data
+//! whatsoever.
+//! 
+//! 2. Recover with loss: we can also reconstruct an _upper bound_ for the
+//! actual state of the queue: the bottom of the second smallest segment in
+//! the queue. In this case, the smallest segment is simply erased and the
+//! receiver caries on as if nothing has happened. If replays are intollerable,
+//! but some data loss is, this might be the right alternative for you. You can
+//! limit data loss by constraining the segment size, configuring this option on
+//! [`crate::SenderBuilder`].
+
 use std::fs::*;
 use std::io;
 use std::path::Path;
@@ -11,8 +32,8 @@ use super::queue::{recv_lock_filename, send_lock_filename};
 use super::state::{QueueState, QueueStatePersistence};
 use super::sync::{FileGuard, UNIQUE_PROCESS_TOKEN};
 
-/// Unlocks a lock file if the owning process does not exist anymore. This
-/// function does nothing if the file does not exist.
+/// Unlocks a `.lock` file if the owning process does not exist anymore. This
+/// function does nothing if the file does not exist. 
 ///
 /// # Panics
 ///
@@ -85,7 +106,7 @@ pub fn unlock<P: AsRef<Path>>(lock_filename: P) -> io::Result<()> {
 }
 
 /// Unlocks a queue in a given directory for sending. This function returns an
-/// error of kind `io::ErrorKind::Other` when the process listed in the
+/// error of kind [`io::ErrorKind::Other`] when the process listed in the
 /// lockfile still exists.
 ///
 /// # Panics
@@ -96,7 +117,7 @@ pub fn unlock_for_sending<P: AsRef<Path>>(base: P) -> io::Result<()> {
 }
 
 /// Unlocks a queue in a given directory for receiving. This function returns
-/// an error of kind `io::ErrorKind::Other` when the process listed in the
+/// an error of kind [`io::ErrorKind::Other`] when the process listed in the
 /// lockfile still exists.
 ///
 /// # Panics
@@ -120,7 +141,7 @@ pub fn unlock_queue<P: AsRef<Path>>(base: P) -> io::Result<()> {
     Ok(())
 }
 
-/// Guesses the receive metadata for a given queue. This equals to the bottom
+/// Guesses the receive metadata for a given queue, using the "with replay" strategy. This equals to the bottom
 /// position in the smallest segment present in the directory or the existing
 /// receiver metadata, whichever is greater. The reason for this is that the
 /// receive metadata is a lower bound of where the receiver actually was and this
@@ -179,7 +200,7 @@ pub fn guess_recv_metadata<P: AsRef<Path>>(base: P) -> io::Result<()> {
     Ok(())
 }
 
-/// Guesses the receive metadata for a given queue. This equals to the bottom
+/// Guesses the receive metadata for a given queue, using the "with loss" strategy. This equals to the bottom
 /// position in the segment after the smallest one present in the directory.
 /// This function will substitute the current receive metadata by this guess upon
 /// acquiring the receive lock on this queue.
@@ -238,7 +259,9 @@ pub fn guess_recv_metadata_with_loss<P: AsRef<Path>>(base: P) -> io::Result<()> 
     Ok(())
 }
 
-/// Recovers a queue, appliying the following operations, in this order:
+/// Recovers a queue using the "with replay" strategy. 
+/// 
+/// It applies the following operations, in this order:
 /// * Unlocks both the sender and receiver side of the queue.
 /// * Guesses the position of the receiver using [`guess_recv_metadata`] (this
 /// is just the existing state of the receiver most of the time).
@@ -263,7 +286,9 @@ pub fn recover<P: AsRef<Path>>(base: P) -> io::Result<()> {
     Ok(())
 }
 
-/// Recovers a queue, appliying the following operations, in this order:
+/// Recovers a queue using the "with loss" strategy.
+/// 
+/// It applies the following operations, in this order:
 /// * Unlocks both the sender and receiver side of the queue.
 /// * Guesses the position of the receiver using [`guess_recv_metadata_with_loss`]
 /// (this truncates the bottom segment of the queue, resulting in data loss).

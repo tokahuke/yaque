@@ -1,3 +1,6 @@
+//! Watcher implementations for specific events on the queue directory. This is the interface with
+//! the `inotify` API.
+
 use notify::event::{Event, EventKind, ModifyKind};
 use notify::{RecommendedWatcher, Watcher};
 use std::path::Path;

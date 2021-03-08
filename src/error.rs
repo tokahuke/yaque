@@ -1,3 +1,5 @@
+//! Errors specific to `yaque`.
+
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
