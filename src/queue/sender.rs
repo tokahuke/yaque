@@ -5,7 +5,7 @@ use std::num::NonZeroU64;
 
 use crate::header::Header;
 use crate::state::QueueState;
-use crate::sync::{FileGuard};
+use crate::sync::{FileGuard, DeletionEvent};
 use crate::error::TrySendError;
 
 use super::{segment_filename, HEADER_EOF};
@@ -60,6 +60,10 @@ pub struct SenderBuilder {
     /// accomodate the last segment (the queue must have at least one segment). Set this to `None`
     /// to create an unbounded queue.
     /// 
+    /// Small detail: "queue size" is defined here as the total size of the base directory
+    /// (non-recursive). Therefore, metadata is included in the queue size as well as any spurious
+    /// files that may appear (who knows?) in the base folder. Sub-folders, however, don't count.
+    /// 
     /// Default value: None
     max_queue_size: Option<NonZeroU64>,
 }
@@ -93,10 +97,15 @@ impl SenderBuilder {
         self.max_segment_size = size;
         self
     }
-    /// The queue size tha]t will block the sender from creating a new segment (until the receiver
+
+    /// The queue size that will block the sender from creating a new segment (until the receiver
     /// catches up, deleting old segments). The queue can get bigger than that, but only to
     /// accomodate the last segment (the queue must have at least one segment). Set this to `None`
     /// to create an unbounded queue.
+    /// 
+    /// Small detail: "queue size" is defined here as the total size of the base directory
+    /// (non-recursive). Therefore, metadata is included in the queue size as well as any spurious
+    /// files that may appear (who knows?) in the base folder. Sub-folders, however, don't count.
     /// 
     /// Default value: None
     /// 
@@ -145,6 +154,7 @@ impl SenderBuilder {
             _file_guard: file_guard,
             file,
             state,
+            deletion_stream: None,
             base: PathBuf::from(base.as_ref()),
         })
     }
@@ -158,6 +168,7 @@ pub struct Sender {
     _file_guard: FileGuard,
     file: io::BufWriter<File>,
     state: QueueState,
+    deletion_stream: Option<DeletionEvent>, // lazy inited!
     base: PathBuf,
 }
 
@@ -236,26 +247,28 @@ impl Sender {
         Ok(true)
     }
 
-    fn maybe_cap_off_and_move(&mut self) -> Result<(), TrySendError> {
+    fn maybe_cap_off_and_move<T>(&mut self, item: T) -> Result<T, TrySendError<T>> {
         // See if you are past the end of the file
         if self.is_past_end() {
-            // If so, create a new file:
+            // If so, create a new file, if you are able to:
             if !self.try_cap_off_and_move()? {
-                return Err(TrySendError::QueueFull { queue_name: format!("{:?}", self.base) });
+                return Err(TrySendError::QueueFull { item, queue_name: format!("{:?}", self.base) });
             }
         }
 
-        Ok(())
+        Ok(item)
     }
 
-    // /// Sends some data into the queue. One send is always atomic.
-    // ///
-    // /// # Errors
-    // ///
-    // /// This function returns any underlying errors encountered while writing or
-    // /// flushing the queue.
-    // /// 
-    
+    /// Lazy inits the future that completes every time a file is deleted.
+    fn deletion_stream(&mut self) -> &mut DeletionEvent {
+        if self.deletion_stream.is_none() {
+            let deletion_stream = DeletionEvent::new(&self.base);
+            self.deletion_stream = Some(deletion_stream);
+        }
+
+        self.deletion_stream.as_mut().unwrap() // because if was not Some, now it is.
+    }
+
     /// Tries to sends some data into the queue. If the queue is too big to
     /// insert (as set in `max_queue_size`), this returns
     /// [`TrySendError::QueueFull`]. One send is always atomic.
@@ -265,8 +278,8 @@ impl Sender {
     /// This function returns any underlying errors encountered while writing or
     /// flushing the queue. Also, it returns [`TrySendError::QueueFull`] if the
     /// queue is too big.
-    pub fn try_send<D: AsRef<[u8]>>(&mut self, data: D) -> Result<(), TrySendError> {
-        self.maybe_cap_off_and_move()?;
+    pub fn try_send<D: AsRef<[u8]>>(&mut self, data: D) -> Result<(), TrySendError<D>> {
+        let data = self.maybe_cap_off_and_move(data)?;
 
         // Write to the queue and flush:
         let written = self.write(data.as_ref())?;
@@ -274,6 +287,28 @@ impl Sender {
         self.state.advance_position(written);
 
         Ok(())
+    }
+
+    /// Sends some data into the queue. One send is always atomic. This function is
+    /// `async` because the queue might be full and so we need to `.await` the
+    /// receiver to consume enough segments to clear the queue.
+    ///
+    /// # Errors
+    ///
+    /// This function returns any underlying errors encountered while writing or
+    /// flushing the queue.
+    /// 
+    pub async fn send<D: AsRef<[u8]>>(&mut self, mut data: D) -> io::Result<()> {
+        loop {
+            match self.try_send(data) {
+                Ok(()) => break Ok(()),
+                Err(TrySendError::Io(err)) => break Err(err),
+                Err(TrySendError::QueueFull { item, .. }) => {
+                    data = item; // the "unmove"!
+                    self.deletion_stream().await // prevents spinlock
+                }
+            }
+        }
     }
 
     /// Tries to send all the contents of an iterable into the queue. If the
@@ -288,12 +323,12 @@ impl Sender {
     /// This function returns any underlying errors encountered while writing or
     /// flushing the queue. Also, it returns [`TrySendError::QueueFull`] if the
     /// queue is too big.
-    pub fn try_send_batch<I>(&mut self, it: I) -> Result<(), TrySendError>
+    pub fn try_send_batch<I>(&mut self, it: I) -> Result<(), TrySendError<I>>
     where
         I: IntoIterator,
         I::Item: AsRef<[u8]>,
     {
-        self.maybe_cap_off_and_move()?;
+        let it = self.maybe_cap_off_and_move(it)?;
 
         let mut written = 0;
         // Drain iterator into the buffer.
@@ -305,5 +340,22 @@ impl Sender {
         self.state.advance_position(written);
 
         Ok(())
+    }
+
+    pub async fn send_batch<I>(&mut self, mut it: I) -> io::Result<()>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<[u8]>,
+    {       
+        loop {
+            match self.try_send_batch(it) {
+                Ok(()) => break Ok(()),
+                Err(TrySendError::Io(err)) => break Err(err),
+                Err(TrySendError::QueueFull { item, .. }) => {
+                    it = item; // the "unmove"!
+                    self.deletion_stream().await // prevents spinlock
+                }
+            }
+        }
     }
 }
