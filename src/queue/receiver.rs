@@ -1,4 +1,5 @@
 use futures::future;
+use futures::FutureExt;
 use std::collections::VecDeque;
 use std::fs::*;
 use std::future::Future;
@@ -11,6 +12,7 @@ use crate::header::Header;
 use crate::state::QueueState;
 use crate::state::QueueStatePersistence;
 use crate::sync::{FileGuard, TailFollower};
+use crate::error::TryRecvError;
 
 use super::{segment_filename, HEADER_EOF};
 
@@ -242,7 +244,7 @@ impl Receiver {
         self.persistence.save(&self.state)
     }
 
-    /// Tries to retrieve an element from the queue. The returned value is a
+    /// Retrieves an element from the queue. The returned value is a
     /// guard that will only commit state changes to the queue when dropped.
     ///
     /// This operation is atomic. If the returned future is not polled to
@@ -272,10 +274,22 @@ impl Receiver {
         })
     }
 
-    /// Tries to retrieve an element from the queue until a given future
-    /// finishes. If an element arrives first, he returned value is a guard
-    /// that will only commit state changes to the queue when dropped.
-    /// Otherwise, `Ok(None)` is returned.
+    /// Tries to retrieve an element from the queue. The returned value is a
+    /// guard that will only commit state changes to the queue when dropped.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if it has to start reading a new segment and
+    /// it is not able to set up the notification handler to watch for file
+    /// changes.
+    pub fn try_recv(&mut self) -> Result<RecvGuard<'_, Vec<u8>>, TryRecvError> {
+        TryRecvError::result_from_option(self.recv().now_or_never())
+    }
+
+    /// Retrieves an element from the queue until a given future
+    /// finishes, whichever comes first. If an element arrives first, the
+    /// returned value is a guard that will only commit state changes to the
+    /// queue when dropped. Otherwise, `Ok(None)` is returned.
     ///
     /// This operation is atomic. If the returned future is not polled to
     /// completion, as, e.g., when calling `select`, the operation will be
@@ -313,8 +327,8 @@ impl Receiver {
         }))
     }
 
-    /// Tries to remove a number of elements from the queue. The returned value
-    /// is a guard that will only commit state changes to the queue when dropped.
+    /// Removes a number of elements from the queue. The returned value is a
+    /// guard that will only commit state changes to the queue when dropped.
     ///
     /// # Note
     ///
@@ -344,6 +358,19 @@ impl Receiver {
             item: Some(data),
             override_drop: false,
         })
+    }
+
+    /// Tries to remove a number of elements from the queue. The returned value
+    /// is a guard that will only commit state changes to the queue when
+    /// dropped.
+    /// 
+    /// # Panics
+    ///
+    /// This function will panic if it has to start reading a new segment and
+    /// it is not able to set up the notification handler to watch for file
+    /// changes.
+    pub fn try_recv_batch(&mut self, n: usize) -> Result<RecvGuard<'_, Vec<Vec<u8>>>, TryRecvError> {
+        TryRecvError::result_from_option(self.recv_batch(n).now_or_never())
     }
 
     /// Tries to remove a number of elements from the queue until a given future
@@ -414,7 +441,7 @@ impl Receiver {
     ///
     /// Receive until an empty element is received:
     /// ```ignore
-    /// let recv_guard = receiver.recv_until(|element| async { element.is_empty() });
+    /// let recv_guard = receiver.recv_until(|element| async { element.is_empty() }).await;
     /// ```
     ///
     /// # Panics
@@ -459,6 +486,40 @@ impl Receiver {
             item: Some(data),
             override_drop: false,
         })
+    }
+
+    /// Tries to take a number of elements from the queue until a certain
+    /// *synchronous* condition is met. Use this function if you want to have
+    /// fine-grained control over the contents of the receive guard.
+    ///
+    /// Note that the predicate function will receive a `None` as the first
+    /// element. This allows you to return early and leave the queue intact.
+    /// The returned value is a guard that will only commit state changes to
+    /// the queue when dropped.
+    ///
+    /// # Example
+    ///
+    /// Try to receive until an empty element is received:
+    /// ```ignore
+    /// let recv_guard = receiver.try_recv_until(|element| element.is_empty());
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if it has to start reading a new segment and
+    /// it is not able to set up the notification handler to watch for file
+    /// changes.
+    pub fn try_recv_until<P, Fut>(
+        &mut self,
+        mut predicate: P,
+    ) -> Result<RecvGuard<'_, Vec<Vec<u8>>>, TryRecvError>
+    where
+        P: FnMut(Option<&[u8]>) -> bool,
+    {
+        TryRecvError::result_from_option(self.recv_until(move |el| {
+            let outcome = predicate(el);
+            async move { outcome }
+        }).now_or_never())
     }
 }
 

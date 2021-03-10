@@ -50,3 +50,38 @@ impl<T> TrySendError<T> {
         }
     }
 }
+
+/// An error that occurs when trying to receive from an empty queue.
+pub enum TryRecvError {
+    Io(io::Error),
+    QeueuEmpty, // { base: PathBuf },
+}
+
+impl From<io::Error> for TryRecvError {
+    fn from(error: io::Error) -> TryRecvError {
+        TryRecvError::Io(error)
+    }
+}
+
+impl TryRecvError {
+    /// Tries to unwrap the IO error. If not able to, panics. You can use the following pattern in your code:
+    /// ```ignore
+    /// queue.try_send(b"some stuff").map_err(TrySendError::unwrap_io)?;
+    /// ```
+    pub fn unwrap_io(self) -> io::Error {
+        match self {
+            TryRecvError::Io(error) => error,
+            TryRecvError::QeueuEmpty => panic!(
+                "was expecting TrySendError::Io; got TryRecvError::QueueEmpty",
+            ),
+        }
+    }
+
+    pub(crate) fn result_from_option<T>(option: Option<io::Result<T>>) -> Result<T, TryRecvError> {
+        match option {
+            Some(Ok(t)) => Ok(t),
+            Some(Err(err)) => Err(TryRecvError::Io(err)),
+            None => Err(TryRecvError::QeueuEmpty),
+        }
+    }
+}
