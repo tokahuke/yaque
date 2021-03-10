@@ -66,7 +66,7 @@ use crate::mutex::Mutex;
 /// in [`crate::Sender::open`] and [`crate::Receiver::open`], it performs a spinlock, instead of `.await`ing.
 pub fn check_queue_version<P: AsRef<Path>>(base: P) -> io::Result<()> {
     let mutex = Mutex::open(base.as_ref().join("version"))?;
-    
+
     // Spin lock but it should be fine...
     let lock = loop {
         if let Some(lock) = mutex.try_lock()? {

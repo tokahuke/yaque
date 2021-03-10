@@ -44,7 +44,7 @@ impl<T> TrySendError<T> {
         match self {
             TrySendError::Io(error) => error,
             TrySendError::QueueFull { base, .. } => panic!(
-                "was expecting TrySendError::Io; got TrySendError::QueueFull (at queue `{:?}`)",
+                "was expecting TrySendError::Io; got TrySendError::QueueFull at queue `{:?}`",
                 base
             ),
         }
@@ -54,7 +54,7 @@ impl<T> TrySendError<T> {
 /// An error that occurs when trying to receive from an empty queue.
 pub enum TryRecvError {
     Io(io::Error),
-    QeueuEmpty, // { base: PathBuf },
+    QeueuEmpty, // { base: PathBuf }, problems with borrow checker. Leave it for future release...
 }
 
 impl From<io::Error> for TryRecvError {
@@ -66,14 +66,14 @@ impl From<io::Error> for TryRecvError {
 impl TryRecvError {
     /// Tries to unwrap the IO error. If not able to, panics. You can use the following pattern in your code:
     /// ```ignore
-    /// queue.try_send(b"some stuff").map_err(TrySendError::unwrap_io)?;
+    /// queue.try_send(b"some stuff").map_err(TryRecvError::unwrap_io)?;
     /// ```
     pub fn unwrap_io(self) -> io::Error {
         match self {
             TryRecvError::Io(error) => error,
-            TryRecvError::QeueuEmpty => panic!(
-                "was expecting TrySendError::Io; got TryRecvError::QueueEmpty",
-            ),
+            TryRecvError::QeueuEmpty => {
+                panic!("was expecting TryRecvError::Io; got TryRecvError::QueueEmpty",)
+            }
         }
     }
 

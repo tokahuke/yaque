@@ -205,5 +205,5 @@ pub mod queue;
 #[cfg(feature = "recovery")]
 pub mod recovery;
 
-pub use error::TrySendError;
+pub use error::{TryRecvError, TrySendError};
 pub use queue::{channel, Receiver, Sender, SenderBuilder};

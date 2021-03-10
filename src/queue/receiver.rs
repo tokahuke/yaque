@@ -7,12 +7,12 @@ use std::io::{self};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
-use crate::version::{check_queue_version};
+use crate::error::TryRecvError;
 use crate::header::Header;
 use crate::state::QueueState;
 use crate::state::QueueStatePersistence;
 use crate::sync::{FileGuard, TailFollower};
-use crate::error::TryRecvError;
+use crate::version::check_queue_version;
 
 use super::{segment_filename, HEADER_EOF};
 
@@ -46,6 +46,7 @@ pub struct Receiver {
     tail_follower: TailFollower,
     maybe_header: Option<[u8; 4]>,
     state: QueueState,
+    initial_state: QueueState,
     base: PathBuf,
     persistence: QueueStatePersistence,
     /// Use this queue to buffer elements and provide "atomicity in an
@@ -94,38 +95,57 @@ impl Receiver {
             tail_follower,
             maybe_header: None,
             state,
+            initial_state: state,
             base: PathBuf::from(base.as_ref()),
             persistence,
             read_and_unused: VecDeque::new(),
         })
     }
 
-    /// Maybe advance the segment of this receiver.
-    fn advance(&mut self) -> io::Result<()> {
-        log::trace!(
-            "advancing segment from {} to {}",
-            self.state.segment,
-            self.state.segment + 1
+    /// Start a transaction in the queue.
+    fn begin(&mut self) {
+        log::debug!("begin transaction in {:?} at {:?}", self.base, self.state);
+    }
+
+    /// Puts the queue in another position in another segment. This forcibly
+    /// discards the old tail follower and fethces a fresh new one, so be
+    /// careful.
+    fn go_to(&mut self, state: QueueState) -> io::Result<()> {
+        let different_segment = self.state.segment != state.segment;
+
+        log::debug!("going from {:?} to {:?}", self.state, state);
+        self.state = state;
+
+        if different_segment {
+            log::debug!("opening segment {}", self.state.segment);
+            self.tail_follower = TailFollower::open(segment_filename(&self.base, self.state.segment))?;
+        }
+        
+        self.tail_follower
+            .seek(io::SeekFrom::Start(state.position))?;
+
+        Ok(())
+    }
+
+    /// Deletes old segments from a given point in time and makes the current
+    /// state the initial state.
+    fn end(&mut self) -> io::Result<()> {
+        assert!(
+            self.state.segment >= self.initial_state.segment,
+            "advanced to a past position. Initial was {:?}; current is {:?}",
+            self.initial_state,
+            self.state
         );
 
-        // Advance segment and checkpoint!
-        self.state.advance_segment();
-        if let Err(err) = self.persistence.save(&self.state) {
-            log::error!("failed to save receiver: {}", err);
-            self.state.retreat_segment();
-            return Err(err);
+        for segment_id in self.initial_state.segment..self.state.segment {
+            log::debug!("removing segment {} from {:?}", segment_id, self.base);
+            remove_file(segment_filename(&self.base, segment_id))?;
         }
 
-        // Start listening to new segments:
-        self.tail_follower = TailFollower::open(segment_filename(&self.base, self.state.segment))?;
+        log::debug!("end transaction in {:?} at {:?} (from {:?})", self.base, self.state, self.initial_state);
 
-        log::trace!("acquired new tail follower");
-
-        // Remove old file (needs to be done *after* opening new file, as there must _always_ be a
-        // segment for the sender to infer its position correcty)
-        remove_file(segment_filename(&self.base, self.state.segment - 1))?;
-
-        log::trace!("removed old segment file");
+        // Finally end the transaction:
+        self.initial_state = self.state;
 
         Ok(())
     }
@@ -144,7 +164,9 @@ impl Receiver {
         // If the header is EOF, advance segment:
         if header == HEADER_EOF {
             log::trace!("got EOF header. Advancing...");
-            self.advance()?;
+            let mut new_state = self.state.clone();
+            new_state.advance_segment();
+            self.go_to(new_state)?; // forces to open new segment.
 
             // Re-read the header:
             log::trace!("re-reading new header from new file");
@@ -154,6 +176,7 @@ impl Receiver {
         // Now, you set the header!
         self.maybe_header = Some(header.clone());
         let decoded = Header::decode(header);
+        self.state.advance_position(4);
 
         log::trace!("got header {:?} (read {} bytes)", header, decoded.len());
 
@@ -179,6 +202,8 @@ impl Receiver {
             .read_exact(&mut data)
             .await
             .expect("poisoned queue");
+
+        self.state.advance_position(data.len() as u64);
 
         // We are done! Unset header:
         self.maybe_header = None;
@@ -241,7 +266,7 @@ impl Receiver {
     /// implemented this way because no errors are allowed to propagate on drop
     /// and panicking will abort the program if drop is called during a panic.
     pub fn save(&mut self) -> io::Result<()> {
-        self.persistence.save(&self.state)
+        self.persistence.save(&self.initial_state) // this aviods saving an in-flight
     }
 
     /// Retrieves an element from the queue. The returned value is a
@@ -257,6 +282,8 @@ impl Receiver {
     /// it is not able to set up the notification handler to watch for file
     /// changes.
     pub async fn recv(&mut self) -> io::Result<RecvGuard<'_, Vec<u8>>> {
+        self.begin();
+
         let data = if let Some(data) = self.read_and_unused.pop_front() {
             data
         } else {
@@ -268,9 +295,8 @@ impl Receiver {
 
         Ok(RecvGuard {
             receiver: self,
-            len: 4 + data.len(),
             item: Some(data),
-            override_drop: false,
+            was_finished: false,
         })
     }
 
@@ -307,6 +333,8 @@ impl Receiver {
     where
         F: Future<Output = ()> + Unpin,
     {
+        self.begin();
+
         let data = if let Some(data) = self.read_and_unused.pop_front() {
             data
         } else {
@@ -321,9 +349,8 @@ impl Receiver {
 
         Ok(Some(RecvGuard {
             receiver: self,
-            len: 4 + data.len(),
             item: Some(data),
-            override_drop: false,
+            was_finished: false,
         }))
     }
 
@@ -342,6 +369,8 @@ impl Receiver {
     /// it is not able to set up the notification handler to watch for file
     /// changes.
     pub async fn recv_batch(&mut self, n: usize) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>> {
+        self.begin();
+
         // First, fetch what is missing from the disk:
         if n > self.read_and_unused.len() {
             for _ in 0..(n - self.read_and_unused.len()) {
@@ -354,22 +383,24 @@ impl Receiver {
 
         Ok(RecvGuard {
             receiver: self,
-            len: data.iter().map(|item| 4 + item.len()).sum(),
             item: Some(data),
-            override_drop: false,
+            was_finished: false,
         })
     }
 
     /// Tries to remove a number of elements from the queue. The returned value
     /// is a guard that will only commit state changes to the queue when
     /// dropped.
-    /// 
+    ///
     /// # Panics
     ///
     /// This function will panic if it has to start reading a new segment and
     /// it is not able to set up the notification handler to watch for file
     /// changes.
-    pub fn try_recv_batch(&mut self, n: usize) -> Result<RecvGuard<'_, Vec<Vec<u8>>>, TryRecvError> {
+    pub fn try_recv_batch(
+        &mut self,
+        n: usize,
+    ) -> Result<RecvGuard<'_, Vec<Vec<u8>>>, TryRecvError> {
         TryRecvError::result_from_option(self.recv_batch(n).now_or_never())
     }
 
@@ -398,6 +429,7 @@ impl Receiver {
     where
         F: Future<Output = ()> + Unpin,
     {
+        self.begin();
         let mut n_read = 0;
 
         // First, fetch what is missing from the disk:
@@ -416,9 +448,8 @@ impl Receiver {
 
         Ok(RecvGuard {
             receiver: self,
-            len: data.iter().map(|item| 4 + item.len()).sum(),
             item: Some(data),
-            override_drop: false,
+            was_finished: false,
         })
     }
 
@@ -457,6 +488,7 @@ impl Receiver {
         P: FnMut(Option<&[u8]>) -> Fut,
         Fut: std::future::Future<Output = bool>,
     {
+        self.begin();
         let mut n_read = 0;
 
         // Prepare:
@@ -482,9 +514,8 @@ impl Receiver {
         let data = self.drain(n_read);
         Ok(RecvGuard {
             receiver: self,
-            len: data.iter().map(|item| 4 + item.len()).sum(),
             item: Some(data),
-            override_drop: false,
+            was_finished: false,
         })
     }
 
@@ -516,10 +547,13 @@ impl Receiver {
     where
         P: FnMut(Option<&[u8]>) -> bool,
     {
-        TryRecvError::result_from_option(self.recv_until(move |el| {
-            let outcome = predicate(el);
-            async move { outcome }
-        }).now_or_never())
+        TryRecvError::result_from_option(
+            self.recv_until(move |el| {
+                let outcome = predicate(el);
+                async move { outcome }
+            })
+            .now_or_never(),
+        )
     }
 }
 
@@ -544,21 +578,14 @@ impl Drop for Receiver {
 /// lose your chance to rollback if anything unexpected occurs.
 pub struct RecvGuard<'a, T> {
     receiver: &'a mut Receiver,
-    len: usize,
     item: Option<T>,
-    override_drop: bool,
+    was_finished: bool,
 }
 
 impl<'a, T> Drop for RecvGuard<'a, T> {
     fn drop(&mut self) {
-        if self.override_drop {
-            // do nothing!
-        } else {
-            if let Err(err) = self
-                .receiver
-                .tail_follower
-                .seek(io::SeekFrom::Current(-(self.len as i64)))
-            {
+        if !self.was_finished {
+            if let Err(err) = self.rollback_mut() {
                 log::error!("unable to rollback on drop: {}", err);
             }
         }
@@ -581,18 +608,28 @@ impl<'a, T> DerefMut for RecvGuard<'a, T> {
 impl<'a, T> RecvGuard<'a, T> {
     /// Commits the transaction and returns the underlying value. If you
     /// accidentally lose this value from now on, it's your own fault!
-    pub fn into_inner(mut self) -> T {
+    pub fn try_into_inner(mut self) -> io::Result<T> {
         let item = self.item.take().expect("unreachable");
-        self.commit();
+        self.commit()?;
 
-        item
+        Ok(item)
     }
 
     /// Commits the changes to the queue, consuming this `RecvGuard`.
-    pub fn commit(mut self) {
-        self.override_drop = true;
-        self.receiver.state.position += self.len as u64;
-        drop(self);
+    pub fn commit(mut self) -> io::Result<()> {
+        self.receiver.end()?;
+        self.was_finished = true;
+
+        Ok(())
+    }
+
+    /// Same as rollback, but doesn't consume the guard. This is for internal use only.
+    fn rollback_mut(&mut self) -> io::Result<()> {
+        self.receiver.go_to(self.receiver.initial_state)?;
+        self.receiver.end()?;
+        self.was_finished = true;
+
+        Ok(())
     }
 
     /// Rolls the reader back to the previous point, negating the changes made
@@ -605,11 +642,6 @@ impl<'a, T> RecvGuard<'a, T> {
     /// If there is some error while moving the reader back, this error will be
     /// return.
     pub fn rollback(mut self) -> io::Result<()> {
-        self.override_drop = true;
-
-        // Do it manually.
-        self.receiver
-            .tail_follower
-            .seek(io::SeekFrom::Current(-(self.len as i64)))
+        self.rollback_mut()
     }
 }

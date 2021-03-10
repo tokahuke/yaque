@@ -6,7 +6,7 @@ use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 /// The internal state of one side of the queue.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QueueState {
     /// The number of the actual segment.
     pub segment: u64,
@@ -106,10 +106,10 @@ impl QueueState {
         self.segment
     }
 
-    /// Goes back to the last segment.
-    pub fn retreat_segment(&mut self) {
-        self.segment -= 1;
-    }
+    // /// Goes back to the last segment.
+    // pub fn retreat_segment(&mut self) {
+    //     self.segment -= 1;
+    // }
 
     /// Advances the position in the segment.'
     pub fn advance_position(&mut self, offset: u64) {

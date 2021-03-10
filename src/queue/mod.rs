@@ -87,14 +87,13 @@ fn init_log() {
 mod tests {
     use super::*;
 
-    use futures::future::Either;
     use futures_timer::Delay;
     use rand::{Rng, SeedableRng};
     use rand_xorshift::XorShiftRng;
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::error::TrySendError;
+    use crate::error::{TrySendError, TryRecvError};
 
     use self::sender::get_queue_size;
 
@@ -158,7 +157,7 @@ mod tests {
                 let data = receiver.recv().await.unwrap();
                 assert_eq!(&*data, should_be, "at sample {}", i);
                 i += 1;
-                data.commit();
+                data.commit().unwrap();
             }
         });
     }
@@ -180,7 +179,7 @@ mod tests {
                 assert_eq!(&*received, data, "at sample {}", i);
 
                 i += 1;
-                received.commit();
+                received.commit().unwrap();
             }
         });
     }
@@ -214,7 +213,7 @@ mod tests {
                     let data = receiver.recv().await.unwrap();
                     assert_eq!(&*data, should_be, "at sample {}", i);
                     i += 1;
-                    data.commit();
+                    data.commit().unwrap();
                 }
             });
         });
@@ -262,7 +261,7 @@ mod tests {
                     let batch = receiver.recv_batch(256).await.unwrap();
                     assert_eq!(&*batch, should_be, "at sample {}", i);
                     i += 1;
-                    batch.commit();
+                    batch.commit().unwrap();
                 }
             });
         });
@@ -294,7 +293,7 @@ mod tests {
                 let received = receiver.recv().await.unwrap();
                 assert_eq!(&*received, data, "at sample {}", i);
                 i += 1;
-                received.commit();
+                received.commit().unwrap();
             }
         });
     }
@@ -309,7 +308,7 @@ mod tests {
             assert_eq!(&*receiver.recv().await.unwrap(), b"123");
             assert_eq!(&*receiver.recv().await.unwrap(), b"123");
 
-            receiver.recv().await.unwrap().commit();
+            receiver.recv().await.unwrap().commit().unwrap();
 
             assert_eq!(&*receiver.recv().await.unwrap(), b"456");
             assert_eq!(&*receiver.recv().await.unwrap(), b"456");
@@ -507,22 +506,15 @@ mod tests {
         );
 
         // Drain queue:
-        futures::executor::block_on(async {
-            loop {
-                match futures::future::select(Box::pin(receiver.recv()), Box::pin(async {})).await {
-                    Either::Left((outcome, _)) => {
-                        let outcome = outcome.unwrap();
-                        outcome.commit();
-                    }
-                    Either::Right((_, _)) => {
-                        log::trace!("queue drained");
-                        break;
-                    }
-                };
+        loop {
+            match receiver.try_recv() {
+                Ok(thing) => thing.commit().unwrap(),
+                Err(TryRecvError::QeueuEmpty) => break,
+                Err(TryRecvError::Io(err)) => Err(err).unwrap(),
             }
-        });
+        }
 
-        for _ in 0..10 {
+        for _ in 0..8 {
             sender.try_send(data.next().unwrap()).unwrap();
         }
     }
@@ -562,7 +554,7 @@ mod tests {
                         let data = receiver.recv().await.unwrap();
                         assert_eq!(&*data, should_be, "at sample {}", i);
                         i += 1;
-                        data.commit();
+                        data.commit().unwrap();
                     }
                 });
             });

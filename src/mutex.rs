@@ -52,10 +52,10 @@ impl Mutex {
 
         if let Some(file_guard) = file_guard {
             let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(self.path.join("contents"))?;
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(self.path.join("contents"))?;
 
             Ok(Some(MutexGuard {
                 _file_guard: file_guard,
