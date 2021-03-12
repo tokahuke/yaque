@@ -98,3 +98,6 @@ hard drive. This means that some major API changes took place:
     * A _new_ method called `Sender::send` is created that works like good old
     `Sender::send`, except that it is async and `.await`s for the queue to shrink
     below the maximum size. The same thing happens to `Sender::send_batch`.
+* You can also just _try_ to receive items, without the need to `.await` anything. For
+each fo the receiving methods `recv`, `recv_batch` and `recv_until` you now have the
+try versions: `try_recv`, `try_recv_batch`, `try_recv_until`.

@@ -3,11 +3,11 @@ use std::io::{self, Write};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 
-use crate::version::{check_queue_version};
 use crate::error::TrySendError;
 use crate::header::Header;
 use crate::state::QueueState;
 use crate::sync::{DeletionEvent, FileGuard};
+use crate::version::check_queue_version;
 
 use super::{segment_filename, HEADER_EOF};
 

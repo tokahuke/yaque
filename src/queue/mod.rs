@@ -6,7 +6,9 @@ mod sender;
 pub use receiver::{Receiver, RecvGuard};
 pub use sender::{Sender, SenderBuilder};
 
+#[cfg(feature = "recovery")]
 pub(crate) use receiver::recv_lock_filename;
+#[cfg(feature = "recovery")]
 pub(crate) use sender::send_lock_filename;
 
 use std::fs::*;
@@ -87,14 +89,13 @@ fn init_log() {
 mod tests {
     use super::*;
 
-    use futures::future::Either;
     use futures_timer::Delay;
     use rand::{Rng, SeedableRng};
     use rand_xorshift::XorShiftRng;
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::error::TrySendError;
+    use crate::error::{TryRecvError, TrySendError};
 
     use self::sender::get_queue_size;
 
@@ -158,7 +159,7 @@ mod tests {
                 let data = receiver.recv().await.unwrap();
                 assert_eq!(&*data, should_be, "at sample {}", i);
                 i += 1;
-                data.commit();
+                data.commit().unwrap();
             }
         });
     }
@@ -180,7 +181,7 @@ mod tests {
                 assert_eq!(&*received, data, "at sample {}", i);
 
                 i += 1;
-                received.commit();
+                received.commit().unwrap();
             }
         });
     }
@@ -214,7 +215,7 @@ mod tests {
                     let data = receiver.recv().await.unwrap();
                     assert_eq!(&*data, should_be, "at sample {}", i);
                     i += 1;
-                    data.commit();
+                    data.commit().unwrap();
                 }
             });
         });
@@ -262,7 +263,7 @@ mod tests {
                     let batch = receiver.recv_batch(256).await.unwrap();
                     assert_eq!(&*batch, should_be, "at sample {}", i);
                     i += 1;
-                    batch.commit();
+                    batch.commit().unwrap();
                 }
             });
         });
@@ -294,7 +295,7 @@ mod tests {
                 let received = receiver.recv().await.unwrap();
                 assert_eq!(&*received, data, "at sample {}", i);
                 i += 1;
-                received.commit();
+                received.commit().unwrap();
             }
         });
     }
@@ -309,7 +310,7 @@ mod tests {
             assert_eq!(&*receiver.recv().await.unwrap(), b"123");
             assert_eq!(&*receiver.recv().await.unwrap(), b"123");
 
-            receiver.recv().await.unwrap().commit();
+            receiver.recv().await.unwrap().commit().unwrap();
 
             assert_eq!(&*receiver.recv().await.unwrap(), b"456");
             assert_eq!(&*receiver.recv().await.unwrap(), b"456");
@@ -507,22 +508,15 @@ mod tests {
         );
 
         // Drain queue:
-        futures::executor::block_on(async {
-            loop {
-                match futures::future::select(Box::pin(receiver.recv()), Box::pin(async {})).await {
-                    Either::Left((outcome, _)) => {
-                        let outcome = outcome.unwrap();
-                        outcome.commit();
-                    }
-                    Either::Right((_, _)) => {
-                        log::trace!("queue drained");
-                        break;
-                    }
-                };
+        loop {
+            match receiver.try_recv() {
+                Ok(thing) => thing.commit().unwrap(),
+                Err(TryRecvError::QueueEmpty) => break,
+                Err(TryRecvError::Io(err)) => Err(err).unwrap(),
             }
-        });
+        }
 
-        for _ in 0..10 {
+        for _ in 0..8 {
             sender.try_send(data.next().unwrap()).unwrap();
         }
     }
@@ -562,7 +556,7 @@ mod tests {
                         let data = receiver.recv().await.unwrap();
                         assert_eq!(&*data, should_be, "at sample {}", i);
                         i += 1;
-                        data.commit();
+                        data.commit().unwrap();
                     }
                 });
             });
@@ -588,5 +582,85 @@ mod tests {
     #[should_panic]
     fn test_small_segment_size() {
         SenderBuilder::new().segment_size(0);
+    }
+
+    // test small segment size + big batch transaction: commit and rollback.
+    #[test]
+    fn test_trans_segment_transactions() {
+        let data = data_lots_of_data().take(100).collect::<Vec<_>>();
+
+        // Populate a queue:
+        let mut sender = SenderBuilder::new()
+            .segment_size(512)
+            .open("data/trans-segment-transactions")
+            .unwrap();
+
+        sender.try_send_batch(&data).unwrap();
+
+        futures::executor::block_on(async move {
+            let mut receiver = Receiver::open("data/trans-segment-transactions").unwrap();
+
+            // Do some rollbacks:
+            for _ in 0..7 {
+                let batch = receiver.recv_batch(50).await.unwrap();
+
+                for (batch_item, item) in batch.iter().zip(&data) {
+                    assert_eq!(batch_item, item);
+                }
+
+                batch.rollback().unwrap();
+            }
+
+            // Now commit:
+            let batch = receiver.recv_batch(50).await.unwrap();
+
+            for (batch_item, item) in batch.iter().zip(&data) {
+                assert_eq!(batch_item, item);
+            }
+
+            batch.commit().unwrap();
+
+            // And now do some more rollbacks:
+            for _ in 0..7 {
+                let batch = receiver.recv_batch(50).await.unwrap();
+
+                for (batch_item, item) in batch.iter().zip(&data[50..]) {
+                    assert_eq!(batch_item, item);
+                }
+
+                batch.rollback().unwrap();
+            }
+        });
+    }
+
+    // test simple try_recv uses.
+    #[test]
+    fn test_try_recv() {
+        let data = data_lots_of_data().take(100).collect::<Vec<_>>();
+
+        // Populate a queue:
+        let mut sender = SenderBuilder::new()
+            .segment_size(512)
+            .open("data/try-recv")
+            .unwrap();
+
+        sender.try_send_batch(&data[..25]).unwrap();
+
+        let mut receiver = Receiver::open("data/try-recv").unwrap();
+
+        let mut count = 0;
+        loop {
+            match receiver.try_recv() {
+                Ok(item) => {
+                    assert_eq!(&*item, &data[count]);
+                    item.commit().unwrap();
+                    count += 1;
+                }
+                Err(TryRecvError::Io(err)) => Err(err).unwrap(),
+                Err(TryRecvError::QueueEmpty) => break,
+            }
+        }
+
+        assert_eq!(count, 25);
     }
 }
