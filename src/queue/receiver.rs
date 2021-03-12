@@ -609,8 +609,8 @@ impl Receiver {
 
 impl Drop for Receiver {
     fn drop(&mut self) {
-        if let Err(err) = self.persistence.save(&self.state) {
-            log::error!("could not release receiver lock: {}", err);
+        if let Err(err) = self.save() {
+            log::error!("(probably) could not save queue state during `Drop`: {}", err);
         }
     }
 }

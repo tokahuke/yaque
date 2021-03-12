@@ -104,3 +104,14 @@ try versions: `try_recv`, `try_recv_batch`, `try_recv_until`.
 * Solved a bug regarding the rollback of batch transactions when crossing over a segment.
 Older versions will do a complete mess out of this. The side effect: `commit` now returns
 a `Result`, which has to be treated.
+
+
+# Version 0.6.1:
+
+* Introduced a new invariant: all items have to be read and used by the end of every
+transaction. I could not verify if this invariant always holds. Anyway, there is an
+assertion in the code to avoid the worse. If you find such a situation, please fill an
+issue.
+* Dropping the Receiver forced the `state` to be saved, not the `initial_state` (the
+state at the begining of the current transaction). Now, `Drop` calls `Receiver::save`
+so that the behavior will be always consistent.
