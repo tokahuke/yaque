@@ -54,7 +54,7 @@ impl<T> TrySendError<T> {
 /// An error that occurs when trying to receive from an empty queue.
 pub enum TryRecvError {
     Io(io::Error),
-    QeueuEmpty, // { base: PathBuf }, problems with borrow checker. Leave it for future release...
+    QueueEmpty, // { base: PathBuf }, problems with borrow checker. Leave it for future release...
 }
 
 impl From<io::Error> for TryRecvError {
@@ -71,7 +71,7 @@ impl TryRecvError {
     pub fn unwrap_io(self) -> io::Error {
         match self {
             TryRecvError::Io(error) => error,
-            TryRecvError::QeueuEmpty => {
+            TryRecvError::QueueEmpty => {
                 panic!("was expecting TryRecvError::Io; got TryRecvError::QueueEmpty",)
             }
         }
@@ -81,7 +81,7 @@ impl TryRecvError {
         match option {
             Some(Ok(t)) => Ok(t),
             Some(Err(err)) => Err(TryRecvError::Io(err)),
-            None => Err(TryRecvError::QeueuEmpty),
+            None => Err(TryRecvError::QueueEmpty),
         }
     }
 }

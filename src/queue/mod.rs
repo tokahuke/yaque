@@ -511,7 +511,7 @@ mod tests {
         loop {
             match receiver.try_recv() {
                 Ok(thing) => thing.commit().unwrap(),
-                Err(TryRecvError::QeueuEmpty) => break,
+                Err(TryRecvError::QueueEmpty) => break,
                 Err(TryRecvError::Io(err)) => Err(err).unwrap(),
             }
         }
@@ -657,7 +657,7 @@ mod tests {
                     count += 1;
                 }
                 Err(TryRecvError::Io(err)) => Err(err).unwrap(),
-                Err(TryRecvError::QeueuEmpty) => break,
+                Err(TryRecvError::QueueEmpty) => break,
             }
         }
 
