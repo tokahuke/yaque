@@ -95,7 +95,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::error::{TrySendError, TryRecvError};
+    use crate::error::{TryRecvError, TrySendError};
 
     use self::sender::get_queue_size;
 
@@ -655,7 +655,7 @@ mod tests {
                     assert_eq!(&*item, &data[count]);
                     item.commit().unwrap();
                     count += 1;
-                },
+                }
                 Err(TryRecvError::Io(err)) => Err(err).unwrap(),
                 Err(TryRecvError::QeueuEmpty) => break,
             }

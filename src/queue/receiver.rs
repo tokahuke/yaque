@@ -102,7 +102,7 @@ impl Receiver {
         })
     }
 
-    /// Start a transaction in the queue.
+    /// Starts a transaction in the queue.
     fn begin(&mut self) {
         log::debug!("begin transaction in {:?} at {:?}", self.base, self.state);
     }
@@ -118,9 +118,10 @@ impl Receiver {
 
         if different_segment {
             log::debug!("opening segment {}", self.state.segment);
-            self.tail_follower = TailFollower::open(segment_filename(&self.base, self.state.segment))?;
+            self.tail_follower =
+                TailFollower::open(segment_filename(&self.base, self.state.segment))?;
         }
-        
+
         self.tail_follower
             .seek(io::SeekFrom::Start(state.position))?;
 
@@ -142,7 +143,12 @@ impl Receiver {
             remove_file(segment_filename(&self.base, segment_id))?;
         }
 
-        log::debug!("end transaction in {:?} at {:?} (from {:?})", self.base, self.state, self.initial_state);
+        log::debug!(
+            "end transaction in {:?} at {:?} (from {:?})",
+            self.base,
+            self.state,
+            self.initial_state
+        );
 
         // Finally end the transaction:
         self.initial_state = self.state;
