@@ -57,7 +57,10 @@ pub struct Receiver {
     /// The queue state saver/loader.
     persistence: QueueStatePersistence,
     /// Use this queue to buffer elements and provide "atomicity in an
-    /// asynchronous context".
+    /// asynchronous context". We need to backup the state of the queue before
+    /// the read so as to restore it as the "initial state" (the _actual_ state
+    /// of the queue) at the end of a transaction. Otherwise, dataloss would
+    /// occur.
     read_and_unused: VecDeque<Vec<u8>>,
 }
 
@@ -157,8 +160,38 @@ impl Receiver {
             self.initial_state
         );
 
-        // Finally end the transaction:
+        // // Reason: think you read with timeout 7 items, but wanted 10. Then, you read with timeout
+        // // 3 items, leaving 4 read and unused. Therefore, the Receiver has read 4 elements ahead,
+        // // which you have not seen. Therefore, initial_state cannot be state in the case, since you
+        // // would lose 4 elements. It has to be the position of the _next_ element in the read and
+        // // unused queue.
+        // self.initial_state = if let Some((_data, state)) = self.read_and_unused.front() {
+        //     *state // the state that was before the next element was read.
+        // } else {
+        //     self.state
+        // };
+
+        // Everything you read has to be used. Otherwise, setting initial state to state loses data.
+        assert!(
+            self.read_and_unused.is_empty(),
+            "There were read and unused items at the end of transaction. Read and unused queue: {:?}",
+            self.read_and_unused
+        );
         self.initial_state = self.state;
+
+        // Alternatively... if you make read and unused VecDeque<(Vec<u8>, QueueState)> to backup the
+        // state, you can do the following (deprecated code):
+
+        // // Reason: think you read with timeout 7 items, but wanted 10. Then, you read with timeout
+        // // 3 items, leaving 4 read and unused. Therefore, the Receiver has read 4 elements ahead,
+        // // which you have not seen. Therefore, initial_state cannot be state in the case, since you
+        // // would lose 4 elements. It has to be the position of the _next_ element in the read and
+        // // unused queue.
+        // self.initial_state = if let Some((_data, state)) = self.read_and_unused.front() {
+        //     *state // the state that was before the next element was read.
+        // } else {
+        //     self.state
+        // };
 
         Ok(())
     }
@@ -269,7 +302,7 @@ impl Receiver {
 
     /// Saves the receiver queue state. You do not need to use method in most
     /// circumstances, since it is automatically done on drop (yes, it will be
-    /// called eve if your thread panics). However, you can use this function to
+    /// called eve if your thread panics). However, you cawn use this function to
     ///
     /// 1. Make periodical backups. Use an external timer implementation for this.
     ///
@@ -301,7 +334,8 @@ impl Receiver {
             data
         } else {
             self.read_one().await?;
-            self.read_and_unused
+            self
+                .read_and_unused
                 .pop_front()
                 .expect("guaranteed to yield an element")
         };
@@ -352,7 +386,8 @@ impl Receiver {
             data
         } else {
             if self.read_one_timeout(timeout).await? {
-                self.read_and_unused
+                self
+                    .read_and_unused
                     .pop_front()
                     .expect("guaranteed to yield an element")
             } else {
