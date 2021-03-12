@@ -101,3 +101,6 @@ hard drive. This means that some major API changes took place:
 * You can also just _try_ to receive items, without the need to `.await` anything. For
 each fo the receiving methods `recv`, `recv_batch` and `recv_until` you now have the
 try versions: `try_recv`, `try_recv_batch`, `try_recv_until`.
+* Solved a bug regarding the rollback of batch transactions when crossing over a segment.
+Older versions will do a complete mess out of this. The side effect: `commit` now returns
+a `Result`, which has to be treated.

@@ -42,12 +42,19 @@ pub(crate) async fn acquire_recv_lock<P: AsRef<Path>>(base: P) -> io::Result<Fil
 /// The receiver part of the queue. This part is asynchronous and therefore
 /// needs an executor that will the poll the futures to completion.
 pub struct Receiver {
-    _file_guard: FileGuard,
-    tail_follower: TailFollower,
-    maybe_header: Option<[u8; 4]>,
-    state: QueueState,
-    initial_state: QueueState,
+    /// The path to the folder holding the queue.
     base: PathBuf,
+    /// The acquired receiver lock file for this queue.
+    _file_guard: FileGuard,
+    /// The current segment being tailed.
+    tail_follower: TailFollower,
+    /// The last header read from the queue.
+    maybe_header: Option<[u8; 4]>,
+    /// The current queue state.
+    state: QueueState,
+    /// The queue state as it was in the begining of the current transaction.
+    initial_state: QueueState,
+    /// The queue state saver/loader.
     persistence: QueueStatePersistence,
     /// Use this queue to buffer elements and provide "atomicity in an
     /// asynchronous context".
@@ -501,6 +508,7 @@ impl Receiver {
         predicate(None).await;
 
         // Poor man's do-while (aka. until)
+        // Strategy: fill `read_and_unused` to the brim and then drain at the end.
         loop {
             // Need to fetch from disk?
             if n_read == self.read_and_unused.len() {
@@ -518,6 +526,7 @@ impl Receiver {
 
         // And now, drain!
         let data = self.drain(n_read);
+
         Ok(RecvGuard {
             receiver: self,
             item: Some(data),
