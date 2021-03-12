@@ -6,7 +6,9 @@ mod sender;
 pub use receiver::{Receiver, RecvGuard};
 pub use sender::{Sender, SenderBuilder};
 
+#[cfg(feature = "recovery")]
 pub(crate) use receiver::recv_lock_filename;
+#[cfg(feature = "recovery")]
 pub(crate) use sender::send_lock_filename;
 
 use std::fs::*;
@@ -580,5 +582,85 @@ mod tests {
     #[should_panic]
     fn test_small_segment_size() {
         SenderBuilder::new().segment_size(0);
+    }
+
+    // test small segment size + big batch transaction: commit and rollback.
+    #[test]
+    fn test_trans_segment_transactions() {
+        let data = data_lots_of_data().take(100).collect::<Vec<_>>();
+
+        // Populate a queue:
+        let mut sender = SenderBuilder::new()
+            .segment_size(512)
+            .open("data/trans-segment-transactions")
+            .unwrap();
+
+        sender.try_send_batch(&data).unwrap();
+
+        futures::executor::block_on(async move {
+            let mut receiver = Receiver::open("data/trans-segment-transactions").unwrap();
+
+            // Do some rollbacks:
+            for _ in 0..7 {
+                let batch = receiver.recv_batch(50).await.unwrap();
+
+                for (batch_item, item) in batch.iter().zip(&data) {
+                    assert_eq!(batch_item, item);
+                }
+
+                batch.rollback().unwrap();
+            }
+
+            // Now commit:
+            let batch = receiver.recv_batch(50).await.unwrap();
+
+            for (batch_item, item) in batch.iter().zip(&data) {
+                assert_eq!(batch_item, item);
+            }
+
+            batch.commit().unwrap();
+
+            // And now do some more rollbacks:
+            for _ in 0..7 {
+                let batch = receiver.recv_batch(50).await.unwrap();
+
+                for (batch_item, item) in batch.iter().zip(&data[50..]) {
+                    assert_eq!(batch_item, item);
+                }
+
+                batch.rollback().unwrap();
+            }
+        });
+    }
+
+    // test simple try_recv uses.
+    #[test]
+    fn test_try_recv() {
+        let data = data_lots_of_data().take(100).collect::<Vec<_>>();
+
+        // Populate a queue:
+        let mut sender = SenderBuilder::new()
+            .segment_size(512)
+            .open("data/try-recv")
+            .unwrap();
+
+        sender.try_send_batch(&data[..25]).unwrap();
+
+        let mut receiver = Receiver::open("data/try-recv").unwrap();
+
+        let mut count = 0;
+        loop {
+            match receiver.try_recv() {
+                Ok(item) => {
+                    assert_eq!(&*item, &data[count]);
+                    item.commit().unwrap();
+                    count += 1;
+                },
+                Err(TryRecvError::Io(err)) => Err(err).unwrap(),
+                Err(TryRecvError::QeueuEmpty) => break,
+            }
+        }
+
+        assert_eq!(count, 25);
     }
 }
