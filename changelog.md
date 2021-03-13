@@ -32,7 +32,7 @@ This is _quite_ significant in terms of throughput.
 
 ## Version 0.3.3:
 
-* Solved a bug in `recovery::unlock`: the file was not being parse correctly.
+* Solved a bug in `recovery::unlock`: the file was not being parsed correctly.
 * `recovery::unlock` now ignores missing files, as it should.
 * Exposed `FileGuard`.
 
@@ -115,3 +115,9 @@ issue.
 * Dropping the Receiver forced the `state` to be saved, not the `initial_state` (the
 state at the begining of the current transaction). Now, `Drop` calls `Receiver::save`
 so that the behavior will be always consistent.
+* We have a backup strategy for saving the queue! It invlves no asyc stuff, so it will
+only be triggered at the end of a transction. The current criterion is: save at every
+250 items read or every 350ms, whichever comes first. This should dimiinish greatly
+the necessity for external control of the save mechanism.
+* Created a `ReceiverBuilder` to allow people to costumize the way the queue is saved.
+This includes altering the above defaults or disabling queue saving altogther.

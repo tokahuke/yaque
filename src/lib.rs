@@ -206,4 +206,4 @@ pub mod queue;
 pub mod recovery;
 
 pub use error::{TryRecvError, TrySendError};
-pub use queue::{channel, Receiver, Sender, SenderBuilder};
+pub use queue::{channel, Receiver, Sender, SenderBuilder, ReceiverBuilder};

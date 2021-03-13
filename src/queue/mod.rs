@@ -3,7 +3,7 @@
 mod receiver;
 mod sender;
 
-pub use receiver::{Receiver, RecvGuard};
+pub use receiver::{Receiver, ReceiverBuilder, RecvGuard};
 pub use sender::{Sender, SenderBuilder};
 
 #[cfg(feature = "recovery")]
