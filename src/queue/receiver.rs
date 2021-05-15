@@ -40,6 +40,9 @@ pub(crate) async fn acquire_recv_lock<P: AsRef<Path>>(base: P) -> io::Result<Fil
     FileGuard::lock(recv_lock_filename(base.as_ref())).await
 }
 
+/// A builder for the receiver side of the queue. Use this if you want to have
+/// fine-grained control over the configuration of the queue. Most defaults
+/// should be ok of most applications.
 pub struct ReceiverBuilder {
     save_every_nth: Option<usize>,
     save_every: Option<Duration>,
@@ -59,11 +62,25 @@ impl ReceiverBuilder {
         ReceiverBuilder::default()
     }
 
+    /// Sets the receiver to save its state to the disk at every n-th element.
+    /// Set it to `None` to disable this policy.
+    /// 
+    /// Default value: every 250 elements.
     pub fn save_every_nth(mut self, nth: Option<usize>) -> ReceiverBuilder {
         self.save_every_nth = nth;
         self
     }
 
+    /// Sets the receiver to save ir state to the disk at every given interval
+    /// of time. Set it to `None` to disable this policy.
+    /// 
+    /// Default value: every 350 milliseconds.
+    /// 
+    /// # Note:
+    /// 
+    /// This policy is enforced _synchronously_. This means that there is no
+    /// asynchronous behavior involved (i.e. timers). This condidition will only
+    /// be checked when a new element is pushed to the queue.
     pub fn save_every(mut self, duration: Option<Duration>) -> ReceiverBuilder {
         self.save_every = duration;
         self
@@ -146,7 +163,8 @@ pub struct Receiver {
     read_and_unused: VecDeque<Vec<u8>>,
     /// Save the queue every n operations
     save_every_nth: Option<usize>,
-    /// Save the queue every interval of time. This will be enforced _synchronously_; no timers involved.
+    /// Save the queue every interval of time. This will be enforced 
+    /// _synchronously_; no timers involved.
     save_every: Option<Duration>,
     /// Number of operations done in this `Receiver`
     n_reads: usize,

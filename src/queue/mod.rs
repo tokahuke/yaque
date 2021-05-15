@@ -703,7 +703,11 @@ mod tests {
 
         let iterated = QueueIter::open("data/iterate")
             .unwrap()
-            .map(|item| item.unwrap())
+            .enumerate()
+            .map(|(i, item)| {
+                println!("{}", i);
+                item.unwrap()
+            })
             .collect::<Vec<_>>();
 
         assert_eq!(data, iterated);
