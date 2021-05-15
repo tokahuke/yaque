@@ -1,23 +1,34 @@
-use futures::{stream, FutureExt, Stream};
 use std::fs::*;
 use std::io::{self};
-use std::path::Path;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::path::{Path, PathBuf};
 
 use crate::header::Header;
-use crate::state::QueueStatePersistence;
-use crate::sync::{FileGuard, TailFollower};
+use crate::sync::{FileGuard, SyncFollower};
 use crate::version::check_queue_version;
+use crate::state::{QueueStatePersistence, QueueState};
 
 use super::try_acquire_recv_lock;
 use super::{segment_filename, HEADER_EOF};
 
-/// The receiver part of the queue. This part is asynchronous and therefore
-/// needs an executor that will the poll the futures to completion.
+/// An [`Iterator`] that iterates over the elements of the queue, until it hts
+/// the end for the first time. Use this structure instead of
+/// [`crate::Receiver`] if you just need to read the data stored in a queue. 
+/// 
+/// Three good reasons for this are:
+/// 
+/// 1. The API is synchronous, since there is no need to wait for new elements.
+/// 2. There is no transactional mechanism involved, since there is no need for
+/// one and, because of this,
+/// 3. Elements are not buffered in memory, as opposed to what
+/// [`crate::Receiver::recv_batch`] does.
+/// 
+/// And you also get some extra percents of performance from a simpler
+/// implementation. Don't pay for what you don't use!
 pub struct QueueIter {
     _file_guard: FileGuard,
-    tail_follower: TailFollower,
+    base: PathBuf,
+    state: QueueState,
+    sync_follower: SyncFollower,
 }
 
 impl QueueIter {
@@ -51,30 +62,50 @@ impl QueueIter {
         log::trace!("receiver lock acquired. Iter state now is {:?}", state);
 
         // Put the needle on the groove (oh! the 70's):
-        let mut tail_follower = TailFollower::open(segment_filename(base.as_ref(), state.segment))?;
-        tail_follower.seek(io::SeekFrom::Start(state.position))?;
+        let mut sync_follower = SyncFollower::open(segment_filename(base.as_ref(), state.segment))?;
+        sync_follower.seek(io::SeekFrom::Start(state.position))?;
 
         log::trace!("last segment opened fo reading");
 
         Ok(QueueIter {
             _file_guard: file_guard,
-            tail_follower,
+            state,
+            base: PathBuf::from(base.as_ref()),
+            sync_follower,
         })
     }
 
+    /// Puts the queue in another position in another segment. This forcibly
+    /// discards the old tail follower and fethces a fresh new one, so be
+    /// careful.
+    fn advance_segment(&mut self) -> io::Result<()> {
+        let current_segment = self.state.segment;
+        self.state.advance_segment();
+        let next_segment = self.state.segment;
+
+        log::debug!("advanced segment from {:?} to {:?}", current_segment, next_segment);
+
+        log::debug!("opening segment {}", next_segment);
+        self.sync_follower =
+            SyncFollower::open(segment_filename(&self.base, next_segment))?;
+
+        Ok(())
+    }
+
     /// Reads the header. This operation is atomic.
-    async fn read_header(&mut self) -> io::Result<Header> {
+    fn read_header(&mut self) -> io::Result<Header> {
         // Read header:
         let mut header = [0; 4];
-        self.tail_follower.read_exact(&mut header).await?;
+        self.sync_follower.read_exact(&mut header)?;
 
         // If the header is EOF, advance segment:
         if header == HEADER_EOF {
             log::trace!("got EOF header. Advancing...");
+            self.advance_segment()?;
 
             // Re-read the header:
             log::trace!("re-reading new header from new file");
-            self.tail_follower.read_exact(&mut header).await?;
+            self.sync_follower.read_exact(&mut header)?;
         }
 
         // Now, you set the header!
@@ -83,26 +114,18 @@ impl QueueIter {
         log::trace!("got header {:?} (read {} bytes)", header, decoded.len());
 
         Ok(decoded)
+
     }
 
-    /// Reads one element from the queue, inevitably advancing the file reader.
-    /// Instead of returning the element, this function puts it in the "read and
-    /// unused" queue to be used later. This enables us to construct "atomic in
-    /// async context" guarantees for the higher level functions. The ideia is to
-    /// _drain the queue_ only after the last `.await` in the block.
-    ///
-    /// This operation is also itlsef atomic. If the returned future is not
-    /// polled to completion, as, e.g., when calling `select`, the operation
-    /// will count as not done.
-    async fn read_one(&mut self) -> io::Result<Vec<u8>> {
+    /// Reads one element from the queue.
+    fn read_one(&mut self) -> io::Result<Vec<u8>> {
         // Get the length:
-        let header = self.read_header().await?;
+        let header = self.read_header()?;
 
         // With the length, read the data:
         let mut data = vec![0; header.len() as usize];
-        self.tail_follower
+        self.sync_follower
             .read_exact(&mut data)
-            .await
             .expect("poisoned queue");
 
         Ok(data)
@@ -113,34 +136,13 @@ impl Iterator for QueueIter {
     type Item = io::Result<Vec<u8>>;
 
     fn next(&mut self) -> Option<io::Result<Vec<u8>>> {
-        self.read_one().now_or_never()
+        match self.read_one() {
+            Ok(item) => Some(Ok(item)),
+            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                log::trace!("got interrupted by eof");
+                None
+            }
+            Err(err) => Some(Err(err)),
+        }
     }
 }
-
-// pub struct QueueStream {
-//     stream: Pin<Box<dyn Stream<Item = io::Result<Vec<u8>>>>>,
-// }
-
-// impl QueueStream {
-//     pub fn open<P: AsRef<Path>>(base: P) -> io::Result<QueueStream> {
-//         let iter = QueueIter::open(base)?;
-//         let stream = stream::unfold(iter, |mut iter| async move {
-//             let next = iter.read_one().await;
-//             Some((next, iter))
-//         });
-
-//         Ok(QueueStream {
-//             stream: Box::pin(stream),
-//         })
-//     }
-// }
-
-// impl Stream for QueueStream {
-//     type Item = io::Result<Vec<u8>>;
-//     fn poll_next(
-//         mut self: Pin<&mut Self>,
-//         cx: &mut Context<'_>,
-//     ) -> Poll<Option<io::Result<Vec<u8>>>> {
-//         Pin::new(&mut self.stream).poll_next(cx)
-//     }
-// }

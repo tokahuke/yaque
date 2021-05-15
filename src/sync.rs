@@ -105,6 +105,18 @@ impl<P: AsRef<Path>> Future for Lock<P> {
     }
 }
 
+fn open_new<P: AsRef<Path>>(path: P) -> io::Result<File> {
+    // "Touch" the file and then open it to ensure its existence:
+    // Any errors here are OK.
+    let maybe_new = OpenOptions::new().create_new(true).append(true).open(&path);
+
+    if maybe_new.is_ok() {
+        log::debug!("file `{:?}` didn't exist. Created new", path.as_ref());
+    }
+
+    File::open(&path)
+}
+
 /// Follows a file asynchronously. The file needs not to even to exist.
 pub struct TailFollower {
     file: io::BufReader<File>,
@@ -140,15 +152,7 @@ impl TailFollower {
     where
         P: 'static + AsRef<Path> + Send + Sync,
     {
-        // "Touch" the file and then open it to ensure its existence:
-        // Any errors here are OK.
-        let maybe_new = OpenOptions::new().create_new(true).append(true).open(&path);
-
-        if maybe_new.is_ok() {
-            log::debug!("file `{:?}` didn't exist. Created new", path.as_ref());
-        }
-
-        let file = File::open(&path)?;
+        let file = open_new(&path)?;
 
         Ok(TailFollower::new(path, file))
     }
@@ -169,7 +173,7 @@ impl TailFollower {
     ///
     /// This function will panic if unable to seek while rewinding to recover
     /// from an incomplete operation. This may change in the future.
-    #[must_use]
+    #[must_use = "futures do nothing untill polled"]
     pub fn read_exact<'a>(&'a mut self, buffer: &'a mut [u8]) -> ReadExact<'a> {
         // Rewind if last invocation was not polled to conclusion:
         if self.read_and_unused != 0 {
@@ -310,5 +314,33 @@ impl DeletionEvent {
             waker,
             _watcher: watcher,
         }
+    }
+}
+
+/// A simpler, sync alternative to [`TailFollower`] used in the implementation
+/// of [`crate::QueueIter`].
+pub struct SyncFollower {
+    file: io::BufReader<File>,
+}
+
+impl SyncFollower {
+    /// Tries to open a file for reading, creating it, if necessary. This is
+    /// not atomic: someone might sneak in just in the right moment and delete
+    /// the file before we open it for reading. To prevent this, use a lockfile.
+    pub fn open<P>(path: P) -> io::Result<SyncFollower>
+    where
+        P: 'static + AsRef<Path> + Send + Sync,
+    {
+        let file = io::BufReader::new(open_new(&path)?);
+
+        Ok(SyncFollower { file })
+    }
+
+    pub fn seek(&mut self, seek: io::SeekFrom) -> io::Result<()> {
+        self.file.seek(seek).map(|_| ())
+    }
+    
+    pub fn read_exact(&mut self, buffer: &mut [u8]) -> io::Result<()> {
+        self.file.read_exact(buffer)
     }
 }
