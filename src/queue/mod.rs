@@ -4,9 +4,9 @@ mod iter;
 mod receiver;
 mod sender;
 
-pub use iter::{QueueIter, QueueStream};
-pub use receiver::{Receiver, RecvGuard};
+pub use receiver::{Receiver, ReceiverBuilder, RecvGuard};
 pub use sender::{Sender, SenderBuilder};
+pub use iter::{QueueIter, QueueStream};
 
 #[cfg(feature = "recovery")]
 pub(crate) use receiver::recv_lock_filename;
@@ -664,5 +664,27 @@ mod tests {
         }
 
         assert_eq!(count, 25);
+    }
+
+    #[test]
+    fn test_receive_with_timeout_and_end_transaction() {
+        // let data = data_lots_of_data().take(100).collect::<Vec<_>>();
+
+        // let (mut sender, mut receiver) = channel("data/receive_with_timeout_and_end_transaction").unwrap();
+
+        // futures::executor::block_on(async move {
+        //     // Put 7 items:
+        //     sender.try_send("these").unwrap();
+        //     sender.try_send("are").unwrap();
+        //     sender.try_send("seven").unwrap();
+        //     sender.try_send("items").unwrap();
+        //     sender.try_send("in").unwrap();
+        //     sender.try_send("the").unwrap();
+        //     sender.try_send("queue").unwrap();
+
+        //     // Ask for 10:
+        //     let guard = receiver.recv_batch_timeout(10, Delay::new(Duration::from_millis(10))).await.unwrap();
+        //     assert!(guard.is_none());
+        // });
     }
 }

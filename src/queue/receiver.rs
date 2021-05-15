@@ -6,6 +6,7 @@ use std::future::Future;
 use std::io::{self};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::error::TryRecvError;
 use crate::header::Header;
@@ -39,22 +40,35 @@ pub(crate) async fn acquire_recv_lock<P: AsRef<Path>>(base: P) -> io::Result<Fil
     FileGuard::lock(recv_lock_filename(base.as_ref())).await
 }
 
-/// The receiver part of the queue. This part is asynchronous and therefore
-/// needs an executor that will the poll the futures to completion.
-pub struct Receiver {
-    _file_guard: FileGuard,
-    tail_follower: TailFollower,
-    maybe_header: Option<[u8; 4]>,
-    state: QueueState,
-    initial_state: QueueState,
-    base: PathBuf,
-    persistence: QueueStatePersistence,
-    /// Use this queue to buffer elements and provide "atomicity in an
-    /// asynchronous context".
-    read_and_unused: VecDeque<Vec<u8>>,
+pub struct ReceiverBuilder {
+    save_every_nth: Option<usize>,
+    save_every: Option<Duration>,
 }
 
-impl Receiver {
+impl Default for ReceiverBuilder {
+    fn default() -> ReceiverBuilder {
+        ReceiverBuilder {
+            save_every_nth: Some(250),
+            save_every: Some(Duration::from_millis(350)),
+        }
+    }
+}
+
+impl ReceiverBuilder {
+    pub fn new() -> ReceiverBuilder {
+        ReceiverBuilder::default()
+    }
+
+    pub fn save_every_nth(mut self, nth: Option<usize>) -> ReceiverBuilder {
+        self.save_every_nth = nth;
+        self
+    }
+
+    pub fn save_every(mut self, duration: Option<Duration>) -> ReceiverBuilder {
+        self.save_every = duration;
+        self
+    }
+
     /// Opens a queue for reading. The access will be exclusive, based on the
     /// existence of the temporary file `recv.lock` inside the queue folder.
     ///
@@ -68,7 +82,7 @@ impl Receiver {
     ///
     /// This function will panic if it is not able to set up the notification
     /// handler to watch for file changes.
-    pub fn open<P: AsRef<Path>>(base: P) -> io::Result<Receiver> {
+    pub fn open<P: AsRef<Path>>(self, base: P) -> io::Result<Receiver> {
         // Guarantee that the queue exists:
         create_dir_all(base.as_ref())?;
 
@@ -99,7 +113,62 @@ impl Receiver {
             base: PathBuf::from(base.as_ref()),
             persistence,
             read_and_unused: VecDeque::new(),
+            save_every: self.save_every,
+            save_every_nth: self.save_every_nth,
+            n_reads: 0,
+            last_saved_at: Instant::now(),
         })
+    }}
+
+/// The receiver part of the queue. This part is asynchronous and therefore
+/// needs an executor that will the poll the futures to completion.
+pub struct Receiver {
+    /// The path to the folder holding the queue.
+    base: PathBuf,
+    /// The acquired receiver lock file for this queue.
+    _file_guard: FileGuard,
+    /// The current segment being tailed.
+    tail_follower: TailFollower,
+    /// The last header read from the queue.
+    maybe_header: Option<[u8; 4]>,
+    /// The current queue state.
+    state: QueueState,
+    /// The queue state as it was in the begining of the current transaction.
+    initial_state: QueueState,
+    /// The queue state saver/loader.
+    persistence: QueueStatePersistence,
+    /// Use this queue to buffer elements and provide "atomicity in an
+    /// asynchronous context". We need to backup the state of the queue before
+    /// the read so as to restore it as the "initial state" (the _actual_ state
+    /// of the queue) at the end of a transaction. Otherwise, dataloss would
+    /// occur.
+    read_and_unused: VecDeque<Vec<u8>>,
+    /// Save the queue every n operations
+    save_every_nth: Option<usize>,
+    /// Save the queue every interval of time. This will be enforced _synchronously_; no timers involved.
+    save_every: Option<Duration>,
+    /// Number of operations done in this `Receiver`
+    n_reads: usize,
+    /// Last time the queue was saved:
+    last_saved_at: Instant, 
+}
+
+impl Receiver {
+    /// Opens a queue for reading. The access will be exclusive, based on the
+    /// existence of the temporary file `recv.lock` inside the queue folder.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an IO error if the queue is already in use for
+    /// receiving, which is indicated by a lock file. Also, any other IO error
+    /// encountered while opening will be sent.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if it is not able to set up the notification
+    /// handler to watch for file changes.
+    pub fn open<P: AsRef<Path>>(base: P) -> io::Result<Receiver> {
+        ReceiverBuilder::default().open(base)
     }
 
     /// Starts a transaction in the queue.
@@ -150,8 +219,41 @@ impl Receiver {
             self.initial_state
         );
 
-        // Finally end the transaction:
+        // // Reason: think you read with timeout 7 items, but wanted 10. Then, you read with timeout
+        // // 3 items, leaving 4 read and unused. Therefore, the Receiver has read 4 elements ahead,
+        // // which you have not seen. Therefore, initial_state cannot be state in the case, since you
+        // // would lose 4 elements. It has to be the position of the _next_ element in the read and
+        // // unused queue.
+        // self.initial_state = if let Some((_data, state)) = self.read_and_unused.front() {
+        //     *state // the state that was before the next element was read.
+        // } else {
+        //     self.state
+        // };
+
+        // Everything you read has to be used. Otherwise, setting initial state to state loses data.
+        assert!(
+            self.read_and_unused.is_empty(),
+            "There were read and unused items at the end of transaction. Read and unused queue: {:?}",
+            self.read_and_unused
+        );
         self.initial_state = self.state;
+
+        // Alternatively... if you make read and unused VecDeque<(Vec<u8>, QueueState)> to backup the
+        // state, you can do the following (deprecated code):
+
+        // // Reason: think you read with timeout 7 items, but wanted 10. Then, you read with timeout
+        // // 3 items, leaving 4 read and unused. Therefore, the Receiver has read 4 elements ahead,
+        // // which you have not seen. Therefore, initial_state cannot be state in the case, since you
+        // // would lose 4 elements. It has to be the position of the _next_ element in the read and
+        // // unused queue.
+        // self.initial_state = if let Some((_data, state)) = self.read_and_unused.front() {
+        //     *state // the state that was before the next element was read.
+        // } else {
+        //     self.state
+        // };
+
+        // Finally save if it is time to save:
+        self.maybe_save()?;
 
         Ok(())
     }
@@ -217,6 +319,9 @@ impl Receiver {
         // Ready to be used:
         self.read_and_unused.push_back(data);
 
+        // Bookkeeping:
+        self.n_reads += 1;
+
         Ok(())
     }
 
@@ -262,7 +367,7 @@ impl Receiver {
 
     /// Saves the receiver queue state. You do not need to use method in most
     /// circumstances, since it is automatically done on drop (yes, it will be
-    /// called eve if your thread panics). However, you can use this function to
+    /// called eve if your thread panics). However, you cawn use this function to
     ///
     /// 1. Make periodical backups. Use an external timer implementation for this.
     ///
@@ -273,6 +378,22 @@ impl Receiver {
     /// and panicking will abort the program if drop is called during a panic.
     pub fn save(&mut self) -> io::Result<()> {
         self.persistence.save(&self.initial_state) // this aviods saving an in-flight
+    }
+
+    fn maybe_save(&mut self) -> io::Result<()> {
+        if let Some(save_every_nth) = self.save_every_nth {
+            if self.n_reads % save_every_nth == 0 {
+                self.save()?;
+            }    
+        }
+
+        else if let Some(save_every) = self.save_every {
+            if self.last_saved_at.elapsed() >= save_every {
+                self.save()?;
+            }
+        }
+        
+        Ok(())
     }
 
     /// Retrieves an element from the queue. The returned value is a
@@ -294,7 +415,8 @@ impl Receiver {
             data
         } else {
             self.read_one().await?;
-            self.read_and_unused
+            self
+                .read_and_unused
                 .pop_front()
                 .expect("guaranteed to yield an element")
         };
@@ -345,7 +467,8 @@ impl Receiver {
             data
         } else {
             if self.read_one_timeout(timeout).await? {
-                self.read_and_unused
+                self
+                    .read_and_unused
                     .pop_front()
                     .expect("guaranteed to yield an element")
             } else {
@@ -501,6 +624,7 @@ impl Receiver {
         predicate(None).await;
 
         // Poor man's do-while (aka. until)
+        // Strategy: fill `read_and_unused` to the brim and then drain at the end.
         loop {
             // Need to fetch from disk?
             if n_read == self.read_and_unused.len() {
@@ -518,6 +642,7 @@ impl Receiver {
 
         // And now, drain!
         let data = self.drain(n_read);
+
         Ok(RecvGuard {
             receiver: self,
             item: Some(data),
@@ -565,8 +690,8 @@ impl Receiver {
 
 impl Drop for Receiver {
     fn drop(&mut self) {
-        if let Err(err) = self.persistence.save(&self.state) {
-            log::error!("could not release receiver lock: {}", err);
+        if let Err(err) = self.save() {
+            log::error!("(probably) could not save queue state during `Drop`: {}", err);
         }
     }
 }
