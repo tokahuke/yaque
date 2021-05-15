@@ -1,8 +1,10 @@
 //! Queue implementation and utility functions.
 
+mod iter;
 mod receiver;
 mod sender;
 
+pub use iter::{QueueIter, QueueStream};
 pub use receiver::{Receiver, RecvGuard};
 pub use sender::{Sender, SenderBuilder};
 
