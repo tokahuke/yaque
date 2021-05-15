@@ -10,6 +10,7 @@ repository = "https://github.com/tokahuke/yaque"
 keywords = ["queue", "persistent", "disk", "data-structures"]
 readme = "readme.md"
 exclude = ["data"]
+resolver = "2"
 
 [features]
 default = ["recovery", "log-trace"]
@@ -18,17 +19,18 @@ log-trace = []  # test only
 log-debug = []  # test only
 
 [dependencies]
-notify = "5.0.0-pre.4"
-log = "^0.4"
-sysinfo = { version = "0.14.5", optional = true }
-futures = "0.3"
+notify = "5.0.0-pre.8"
+log = "0.4.14"
+sysinfo = { version = "0.17.4", default-features = false, optional = true }
+futures = "0.3.15"
 lazy_static = "1.4.0"
-rand = "0.7.3"
+rand = "0.8.3"
 semver = "0.11.0"
 
 [dev-dependencies]
-rand = "0.7.3"
-rand_xorshift = "0.2.0"
+rand = "0.8.3"
+rand_xorshift = "0.3.0"
 simple_logger = "1.11.0"
-ctor = "0.1.16"
-futures-timer = "3.0"
+ctor = "0.1.20"
+futures-timer = "3.0.2"
+
