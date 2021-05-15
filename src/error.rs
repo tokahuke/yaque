@@ -53,7 +53,9 @@ impl<T> TrySendError<T> {
 
 /// An error that occurs when trying to receive from an empty queue.
 pub enum TryRecvError {
+    /// An underlying IO error occurred.
     Io(io::Error),
+    /// The queue is empty and there is nothing to be received right now.
     QueueEmpty, // { base: PathBuf }, problems with borrow checker. Leave it for future release...
 }
 

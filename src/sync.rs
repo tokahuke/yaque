@@ -57,8 +57,8 @@ impl FileGuard {
         self.ignore = true;
     }
 
-    /// Tries to lock using a certain path in the disk. If the file exists,
-    /// returns `Ok(None)`.
+    /// Tries to lock using a certain path in the disk. If the file exists, i.e.
+    /// the lock is locked, returns `Ok(None)`.
     pub fn try_lock<P: AsRef<Path>>(path: P) -> io::Result<Option<FileGuard>> {
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut file) => {
@@ -73,6 +73,8 @@ impl FileGuard {
         }
     }
 
+    /// Awaits for the lock in a certain disk path to be unlocked and locks it
+    /// when possible.
     pub async fn lock<P: AsRef<Path>>(path: P) -> io::Result<FileGuard> {
         // Set up waker:
         let waker = Arc::new(Mutex::new(None));
@@ -339,7 +341,7 @@ impl SyncFollower {
     pub fn seek(&mut self, seek: io::SeekFrom) -> io::Result<()> {
         self.file.seek(seek).map(|_| ())
     }
-    
+
     pub fn read_exact(&mut self, buffer: &mut [u8]) -> io::Result<()> {
         self.file.read_exact(buffer)
     }
