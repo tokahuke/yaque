@@ -1,8 +1,10 @@
 //! Queue implementation and utility functions.
 
+mod iter;
 mod receiver;
 mod sender;
 
+pub use iter::{QueueIter};
 pub use receiver::{Receiver, ReceiverBuilder, RecvGuard};
 pub use sender::{Sender, SenderBuilder};
 
@@ -89,6 +91,7 @@ fn init_log() {
 mod tests {
     use super::*;
 
+    // use futures::StreamExt;
     use futures_timer::Delay;
     use rand::{Rng, SeedableRng};
     use rand_xorshift::XorShiftRng;
@@ -685,4 +688,72 @@ mod tests {
         //     assert!(guard.is_none());
         // });
     }
+
+    #[test]
+    fn test_iterate() {
+        let data = data_lots_of_data().take(10_000).collect::<Vec<_>>();
+
+        // Populate a queue:
+        let mut sender = SenderBuilder::new()
+            .segment_size(512)
+            .open("data/iterate")
+            .unwrap();
+
+        sender.try_send_batch(&data).unwrap();
+
+        let iterated = QueueIter::open("data/iterate")
+            .unwrap()
+            .map(|item| item.unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(data, iterated);
+    }
+
+    // #[test]
+    // fn test_stream() {
+    //     let data = data_lots_of_data().take(10_000).collect::<Vec<_>>();
+
+    //     // Populate a queue:
+    //     let mut sender = SenderBuilder::new()
+    //         .segment_size(512)
+    //         .open("data/stream")
+    //         .unwrap();
+
+    //     sender.try_send_batch(&data).unwrap();
+
+    //     futures::executor::block_on(async move {
+    //         let iterated = QueueStream::open("data/stream")
+    //             .unwrap()
+    //             .take(10_000)
+    //             .map(|item| item.unwrap())
+    //             .collect::<Vec<_>>()
+    //             .await;
+    //         assert_eq!(data, iterated);
+    //     });
+    // }
+
+    // #[test]
+    // fn test_stream_as_channel() {
+    //     let data = data_lots_of_data().take(10_000).collect::<Vec<_>>();
+
+    //     // Populate a queue:
+    //     let mut sender = SenderBuilder::new()
+    //         .segment_size(512)
+    //         .open("data/stream-as-channel")
+    //         .unwrap();
+
+    //     let mut stream = QueueStream::open("data/stream-as-channel").unwrap();
+
+    //     futures::executor::block_on(async move {
+    //         let mut i = 0;
+    //         for datum in data {
+    //             println!("{}", i);
+    //             i +=1;
+
+    //             sender.try_send(&datum).unwrap();
+    //             let received = stream.next().await.unwrap().unwrap();
+    //             assert_eq!(datum, received);
+    //         }
+    //     });
+    // }
 }
