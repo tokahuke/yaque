@@ -118,7 +118,8 @@ impl ReceiverBuilder {
             n_reads: 0,
             last_saved_at: Instant::now(),
         })
-    }}
+    }
+}
 
 /// The receiver part of the queue. This part is asynchronous and therefore
 /// needs an executor that will the poll the futures to completion.
@@ -150,7 +151,7 @@ pub struct Receiver {
     /// Number of operations done in this `Receiver`
     n_reads: usize,
     /// Last time the queue was saved:
-    last_saved_at: Instant, 
+    last_saved_at: Instant,
 }
 
 impl Receiver {
@@ -384,15 +385,13 @@ impl Receiver {
         if let Some(save_every_nth) = self.save_every_nth {
             if self.n_reads % save_every_nth == 0 {
                 self.save()?;
-            }    
-        }
-
-        else if let Some(save_every) = self.save_every {
+            }
+        } else if let Some(save_every) = self.save_every {
             if self.last_saved_at.elapsed() >= save_every {
                 self.save()?;
             }
         }
-        
+
         Ok(())
     }
 
@@ -415,8 +414,7 @@ impl Receiver {
             data
         } else {
             self.read_one().await?;
-            self
-                .read_and_unused
+            self.read_and_unused
                 .pop_front()
                 .expect("guaranteed to yield an element")
         };
@@ -467,8 +465,7 @@ impl Receiver {
             data
         } else {
             if self.read_one_timeout(timeout).await? {
-                self
-                    .read_and_unused
+                self.read_and_unused
                     .pop_front()
                     .expect("guaranteed to yield an element")
             } else {
@@ -691,7 +688,10 @@ impl Receiver {
 impl Drop for Receiver {
     fn drop(&mut self) {
         if let Err(err) = self.save() {
-            log::error!("(probably) could not save queue state during `Drop`: {}", err);
+            log::error!(
+                "(probably) could not save queue state during `Drop`: {}",
+                err
+            );
         }
     }
 }

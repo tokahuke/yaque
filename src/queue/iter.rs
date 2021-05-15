@@ -117,30 +117,30 @@ impl Iterator for QueueIter {
     }
 }
 
-pub struct QueueStream {
-    stream: Pin<Box<dyn Stream<Item = io::Result<Vec<u8>>>>>,
-}
+// pub struct QueueStream {
+//     stream: Pin<Box<dyn Stream<Item = io::Result<Vec<u8>>>>>,
+// }
 
-impl QueueStream {
-    pub fn open<P: AsRef<Path>>(base: P) -> io::Result<QueueStream> {
-        let iter = QueueIter::open(base)?;
-        let stream = stream::unfold(iter, |mut iter| async move {
-            let next = iter.read_one().await;
-            Some((next, iter))
-        });
+// impl QueueStream {
+//     pub fn open<P: AsRef<Path>>(base: P) -> io::Result<QueueStream> {
+//         let iter = QueueIter::open(base)?;
+//         let stream = stream::unfold(iter, |mut iter| async move {
+//             let next = iter.read_one().await;
+//             Some((next, iter))
+//         });
 
-        Ok(QueueStream {
-            stream: Box::pin(stream),
-        })
-    }
-}
+//         Ok(QueueStream {
+//             stream: Box::pin(stream),
+//         })
+//     }
+// }
 
-impl Stream for QueueStream {
-    type Item = io::Result<Vec<u8>>;
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<io::Result<Vec<u8>>>> {
-        Pin::new(&mut self.stream).poll_next(cx)
-    }
-}
+// impl Stream for QueueStream {
+//     type Item = io::Result<Vec<u8>>;
+//     fn poll_next(
+//         mut self: Pin<&mut Self>,
+//         cx: &mut Context<'_>,
+//     ) -> Poll<Option<io::Result<Vec<u8>>>> {
+//         Pin::new(&mut self.stream).poll_next(cx)
+//     }
+// }
