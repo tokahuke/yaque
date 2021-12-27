@@ -129,9 +129,7 @@ pub struct TailFollower {
 
 impl TailFollower {
     /// Creates a new following file.
-    fn new<P>(path: P, file: File) -> TailFollower
-    where
-        P: 'static + AsRef<Path> + Send + Sync,
+    fn new(path: &Path, file: File) -> TailFollower
     {
         // Set up waker:
         let waker = Arc::new(Mutex::new(None));
@@ -150,9 +148,7 @@ impl TailFollower {
     /// Tries to open a file for reading, creating it, if necessary. This is
     /// not atomic: someone might sneak in just in the right moment and delete
     /// the file before we open it for reading. To prevent this, use a lockfile.
-    pub fn open<P>(path: P) -> io::Result<TailFollower>
-    where
-        P: 'static + AsRef<Path> + Send + Sync,
+    pub fn open(path: &Path) -> io::Result<TailFollower>
     {
         let file = open_new(&path)?;
 
@@ -308,7 +304,7 @@ impl Future for DeletionEvent {
 }
 
 impl DeletionEvent {
-    pub fn new<P: AsRef<Path>>(base: P) -> DeletionEvent {
+    pub fn new(base: &Path) -> DeletionEvent {
         let waker = Arc::new(Mutex::new(None));
         let watcher = removal_watcher(base, Arc::clone(&waker));
 

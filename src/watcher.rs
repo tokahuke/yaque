@@ -53,7 +53,7 @@ where
 {
     // Set up watcher:
     let mut watcher =
-        notify::immediate_watcher(move |maybe_event: notify::Result<notify::Event>| {
+        notify::recommended_watcher(move |maybe_event: notify::Result<notify::Event>| {
             match maybe_event.expect("received error from watcher") {
                 // When any modification in the file happens
                 Event {
@@ -83,13 +83,11 @@ where
 }
 
 /// Watches *any* removal in a given path.
-pub(crate) fn removal_watcher<P>(path: P, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
-where
-    P: AsRef<Path>,
+pub(crate) fn removal_watcher(path: &Path, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
 {
     // Set up watcher:
     let mut watcher =
-        notify::immediate_watcher(move |maybe_event: notify::Result<notify::Event>| {
+        notify::recommended_watcher(move |maybe_event: notify::Result<notify::Event>| {
             match maybe_event.expect("received error from watcher") {
                 Event {
                     kind: EventKind::Remove(_),
@@ -115,13 +113,11 @@ where
 }
 
 /// Watches a file for changes in its content.
-pub(crate) fn file_watcher<P>(path: P, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
-where
-    P: AsRef<Path>,
+pub(crate) fn file_watcher(path: &Path, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
 {
     // Set up watcher:
     let mut watcher =
-        notify::immediate_watcher(move |maybe_event: notify::Result<notify::Event>| {
+        notify::recommended_watcher(move |maybe_event: notify::Result<notify::Event>| {
             match maybe_event.expect("received error from watcher") {
                 // When any modification in the file happens
                 Event {

@@ -116,7 +116,7 @@ impl ReceiverBuilder {
         log::trace!("receiver lock acquired. Receiver state now is {:?}", state);
 
         // Put the needle on the groove (oh! the 70's):
-        let mut tail_follower = TailFollower::open(segment_filename(base.as_ref(), state.segment))?;
+        let mut tail_follower = TailFollower::open(&segment_filename(base.as_ref(), state.segment))?;
         tail_follower.seek(io::SeekFrom::Start(state.position))?;
 
         log::trace!("last segment opened fo reading");
@@ -207,7 +207,7 @@ impl Receiver {
         if different_segment {
             log::debug!("opening segment {}", self.state.segment);
             self.tail_follower =
-                TailFollower::open(segment_filename(&self.base, self.state.segment))?;
+                TailFollower::open(&segment_filename(&self.base, self.state.segment))?;
         }
 
         self.tail_follower
