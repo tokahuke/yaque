@@ -123,10 +123,19 @@ the necessity for external control of the save mechanism.
 This includes altering the above defaults or disabling queue saving altogther.
 
 
-# Version 0.6.2:
+## Version 0.6.2:
 
 * Created a `QueueIter` which allows to iterate through a queue as a list. The interface
 is completely synchronous and has less overhead than just using the `Receiver`, besides
 leading to clearer code.
 * Documented some undocumented items.
 * Upgraded dependencies and reduced the total number of them.
+
+
+## Version 0.6.3:
+
+* Changes to mirror the pre-releases of `notify`.
+
+### Contributors:
+
+* [@netguy204](https://github.com/netguy204)
