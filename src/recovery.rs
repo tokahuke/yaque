@@ -73,14 +73,14 @@ pub fn unlock<P: AsRef<Path>>(lock_filename: P) -> io::Result<()> {
         .expect("failed to parse recv lock file: no token")
         .expect("failed to parse recv lock file: bad token");
 
-    let system = System::new_with_specifics(RefreshKind::new().with_processes());
+    let system = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
 
     // Maybe somebody else is holding the lock:
     let process_exists_and_is_not_me =
-        owner_pid as u32 != std::process::id() && system.get_processes().get(&owner_pid).is_some();
+        owner_pid.as_u32() != std::process::id() && system.process(owner_pid).is_some();
     // I am holding the lock:
     let lock_is_the_same_and_is_me =
-        owner_pid as u32 == std::process::id() && owner_token == *UNIQUE_PROCESS_TOKEN;
+        owner_pid.as_u32() == std::process::id() && owner_token == *UNIQUE_PROCESS_TOKEN;
 
     if process_exists_and_is_not_me {
         return Err(io::Error::new(
