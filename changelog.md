@@ -139,3 +139,12 @@ leading to clearer code.
 ### Contributors:
 
 * [@netguy204](https://github.com/netguy204)
+
+
+## Version 0.6.4:
+
+* Update dependencies and fix vulerabilities (dependabot).
+
+### Contributors:
+
+* [@grant0417](https://github.com/grant0417)
