@@ -19,7 +19,7 @@ log-trace = []  # test only
 log-debug = []  # test only
 
 [dependencies]
-notify = "5.0.0-pre.16"
+notify = "5.0.0-pre.15"
 log = "0.4.17"
 sysinfo = { version = "0.25.2", default-features = false, optional = true }
 futures = "0.3.23"
