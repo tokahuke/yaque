@@ -19,17 +19,17 @@ log-trace = []  # test only
 log-debug = []  # test only
 
 [dependencies]
-notify = "5.0.0-pre.15"
+notify = "5.1.0"
 log = "0.4.17"
-sysinfo = { version = "0.25.2", default-features = false, optional = true }
-futures = "0.3.23"
+sysinfo = { version = "0.28.0", default-features = false, optional = true }
+futures = "0.3.26"
 lazy_static = "1.4.0"
 rand = "0.8.5"
-semver = "1.0.13"
+semver = "1.0.16"
 
 [dev-dependencies]
 rand_xorshift = "0.3.0"
-simple_logger = "2.2.0"
-ctor = "0.1.23"
+simple_logger = "4.0.0"
+ctor = "0.1.26"
 futures-timer = "3.0.2"
 
