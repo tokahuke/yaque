@@ -3,6 +3,8 @@
         "Asbt",
         "Deque",
         "inotify",
+        "libfuzzer",
+        "mullr",
         "preppers",
         "Seedable",
         "SIGKILL",

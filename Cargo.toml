@@ -1,8 +1,8 @@
 [package]
 name = "yaque"
-version = "0.6.4"
-authors = ["Pedro Arruda <pedrobittencourt3@protonmail.ch>"]
-edition = "2018"
+version = "0.6.5"
+authors = ["Pedro Arruda <pedrobittencourt3@gmail.com>"]
+edition = "2021"
 description = "Yaque is yet another disk-backed persistent queue for Rust"
 license = "Apache-2.0"
 homepage = "https://github.com/tokahuke/yaque"
@@ -10,7 +10,6 @@ repository = "https://github.com/tokahuke/yaque"
 keywords = ["queue", "persistent", "disk", "data-structures"]
 readme = "readme.md"
 exclude = ["data"]
-resolver = "2"
 
 [features]
 default = ["recovery", "log-trace"]
