@@ -1,6 +1,19 @@
 {
     "cSpell.words": [
-        "sysinfo"
+        "Asbt",
+        "Deque",
+        "inotify",
+        "libfuzzer",
+        "mullr",
+        "preppers",
+        "Seedable",
+        "SIGKILL",
+        "spinlock",
+        "SPSC",
+        "sysinfo",
+        "unmove",
+        "xorshift",
+        "yaque"
     ],
     "cSpell.ignoreWords": [
         "toctou"

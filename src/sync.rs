@@ -14,8 +14,8 @@ use std::task::{Context, Poll, Waker};
 use crate::watcher::{file_removal_watcher, file_watcher, removal_watcher};
 
 lazy_static! {
-    /// A unique token to differentiate between processes wich might have the
-    /// same PID, but are otherwise differente instances.
+    /// A unique token to differentiate between processes which might have the
+    /// same PID, but are otherwise different instances.
     pub(crate) static ref UNIQUE_PROCESS_TOKEN: u64 = rand::thread_rng().gen();
 }
 
@@ -171,7 +171,7 @@ impl TailFollower {
     ///
     /// This function will panic if unable to seek while rewinding to recover
     /// from an incomplete operation. This may change in the future.
-    #[must_use = "futures do nothing untill polled"]
+    #[must_use = "futures do nothing until polled"]
     pub fn read_exact<'a>(&'a mut self, buffer: &'a mut [u8]) -> ReadExact<'a> {
         // Rewind if last invocation was not polled to conclusion:
         if self.read_and_unused != 0 {

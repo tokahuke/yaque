@@ -76,7 +76,7 @@ impl QueueIter {
     }
 
     /// Puts the queue in another position in another segment. This forcibly
-    /// discards the old tail follower and fethces a fresh new one, so be
+    /// discards the old tail follower and fetches a fresh new one, so be
     /// careful.
     fn advance_segment(&mut self) -> io::Result<()> {
         let current_segment = self.state.segment;

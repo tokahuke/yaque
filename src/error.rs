@@ -4,7 +4,7 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
-/// An error that occurrs when trying to send into a queue.
+/// An error that occurs when trying to send into a queue.
 #[derive(Debug)]
 pub enum TrySendError<T> {
     /// An underlying IO error occurred.
