@@ -63,7 +63,8 @@ use crate::mutex::Mutex;
 /// Gets the version of the queue, or sets it if there is not one and then checks if the version is
 /// compatible with the current loaded version of `yaque`. It uses a mutex to implement atomicity
 /// (yes, we have had some race conditions during testing), but, for the sake of API compatibility
-/// in [`crate::Sender::open`] and [`crate::Receiver::open`], it performs a spinlock, instead of `.await`ing.
+/// in [`crate::Sender::open`] and [`crate::Receiver::open`], it performs a spinlock, instead of 
+/// `.await`ing.
 pub fn check_queue_version<P: AsRef<Path>>(base: P) -> io::Result<()> {
     let mutex = Mutex::open(base.as_ref().join("version"))?;
 

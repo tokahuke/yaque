@@ -18,7 +18,7 @@
 //! 2. Recover with loss: we can also reconstruct an _upper bound_ for the
 //! actual state of the queue: the bottom of the second smallest segment in
 //! the queue. In this case, the smallest segment is simply erased and the
-//! receiver caries on as if nothing has happened. If replays are intollerable,
+//! receiver caries on as if nothing has happened. If replays are intolerable,
 //! but some data loss is, this might be the right alternative for you. You can
 //! limit data loss by constraining the segment size, configuring this option on
 //! [`crate::SenderBuilder`].
@@ -277,7 +277,7 @@ pub fn guess_recv_metadata_with_loss<P: AsRef<Path>>(base: P) -> io::Result<()> 
 /// # Panics
 ///
 /// This function panics if there is a file in the queue folder with extension
-/// `.q` whose name is not an integer, such as `foo.q` or if the lockfiles for
+/// `.q` whose name is not an integer, such as `foo.q` or if the lock files for
 /// either sending or receiving cannot be parsed.
 pub fn recover<P: AsRef<Path>>(base: P) -> io::Result<()> {
     unlock_queue(base.as_ref())?;
@@ -301,7 +301,7 @@ pub fn recover<P: AsRef<Path>>(base: P) -> io::Result<()> {
 /// # Panics
 ///
 /// This function panics if there is a file in the queue folder with extension
-/// `.q` whose name is not an integer, such as `foo.q` or if the lockfiles for
+/// `.q` whose name is not an integer, such as `foo.q` or if the lock files for
 /// either sending or receiving cannot be parsed.
 pub fn recover_with_loss<P: AsRef<Path>>(base: P) -> io::Result<()> {
     unlock_queue(base.as_ref())?;
