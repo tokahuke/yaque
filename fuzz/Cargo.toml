@@ -1,0 +1,29 @@
+[package]
+name = "yaque-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = "1.2.3"
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+tempfile = "3.3.0"
+
+[dependencies.yaque]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "queue_operations"
+path = "fuzz_targets/queue_operations.rs"
+test = false
+doc = false
