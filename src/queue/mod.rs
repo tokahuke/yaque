@@ -105,7 +105,7 @@ mod tests {
     fn data_lots_of_data() -> impl Iterator<Item = Vec<u8>> {
         let mut rng = XorShiftRng::from_rng(rand::thread_rng()).expect("can init");
         (0..).map(move |_| {
-            (0..rng.gen::<usize>() % 128 + 1)
+            (0..rng.gen::<usize>() % 128)
                 .map(|_| rng.gen())
                 .collect::<Vec<_>>()
         })
@@ -807,51 +807,20 @@ mod tests {
         assert_eq!(data, iterated);
     }
 
-    // #[test]
-    // fn test_stream() {
-    //     let data = data_lots_of_data().take(10_000).collect::<Vec<_>>();
+    #[test]
+    fn test_try_recv_empty_msg() {
+        // Populate a queue:
+        let mut sender = SenderBuilder::new()
+            .segment_size(512)
+            .open("data/try-recv-empty-msg")
+            .unwrap();
 
-    //     // Populate a queue:
-    //     let mut sender = SenderBuilder::new()
-    //         .segment_size(512)
-    //         .open("data/stream")
-    //         .unwrap();
+        sender.try_send(&[]).unwrap();
 
-    //     sender.try_send_batch(&data).unwrap();
+        let mut receiver = Receiver::open("data/try-recv-empty-msg").unwrap();
 
-    //     futures::executor::block_on(async move {
-    //         let iterated = QueueStream::open("data/stream")
-    //             .unwrap()
-    //             .take(10_000)
-    //             .map(|item| item.unwrap())
-    //             .collect::<Vec<_>>()
-    //             .await;
-    //         assert_eq!(data, iterated);
-    //     });
-    // }
-
-    // #[test]
-    // fn test_stream_as_channel() {
-    //     let data = data_lots_of_data().take(10_000).collect::<Vec<_>>();
-
-    //     // Populate a queue:
-    //     let mut sender = SenderBuilder::new()
-    //         .segment_size(512)
-    //         .open("data/stream-as-channel")
-    //         .unwrap();
-
-    //     let mut stream = QueueStream::open("data/stream-as-channel").unwrap();
-
-    //     futures::executor::block_on(async move {
-    //         let mut i = 0;
-    //         for datum in data {
-    //             println!("{}", i);
-    //             i +=1;
-
-    //             sender.try_send(&datum).unwrap();
-    //             let received = stream.next().await.unwrap().unwrap();
-    //             assert_eq!(datum, received);
-    //         }
-    //     });
-    // }
+        let item = receiver.try_recv().unwrap();
+        assert_eq!(&*item, &[]);
+        item.commit().unwrap();
+    }
 }

@@ -73,7 +73,8 @@ pub fn unlock<P: AsRef<Path>>(lock_filename: P) -> io::Result<()> {
         .expect("failed to parse recv lock file: no token")
         .expect("failed to parse recv lock file: bad token");
 
-    let system = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+    let system =
+        System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
 
     // Maybe somebody else is holding the lock:
     let process_exists_and_is_not_me =

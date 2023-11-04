@@ -129,8 +129,7 @@ pub struct TailFollower {
 
 impl TailFollower {
     /// Creates a new following file.
-    fn new(path: &Path, file: File) -> TailFollower
-    {
+    fn new(path: &Path, file: File) -> TailFollower {
         // Set up waker:
         let waker = Arc::new(Mutex::new(None));
 
@@ -148,8 +147,7 @@ impl TailFollower {
     /// Tries to open a file for reading, creating it, if necessary. This is
     /// not atomic: someone might sneak in just in the right moment and delete
     /// the file before we open it for reading. To prevent this, use a lockfile.
-    pub fn open(path: &Path) -> io::Result<TailFollower>
-    {
+    pub fn open(path: &Path) -> io::Result<TailFollower> {
         let file = open_new(&path)?;
 
         Ok(TailFollower::new(path, file))

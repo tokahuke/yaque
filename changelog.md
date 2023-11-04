@@ -51,7 +51,7 @@ state.
 ## Version 0.4.3:
 
 * Small improvements to docs.
-* Unittests will perform correctly after a previous run was interrupted by 
+* Unit tests will perform correctly after a previous run was interrupted by 
 CTRL+C.
 * Created the `recovery::recover` function for a "full course" queue recover in
 a single command.
@@ -60,7 +60,7 @@ a single command.
 
 * `recv_timeout` and `recv_batch_timeout` to allow receiving with timeout.
 * `recv_batch` is "atomic in an asynchronous context".
-* Now, unlock works even if the process respawns with the same PID.
+* Now, unlock works even if the process re-spawns with the same PID.
 * Recovery of queue works with two modes: replay, which is the behavior of 
 `recovery::recover`, and "with loss", that discards the bottom segment entirely
 (a bit extreme, but we will work on that). Use the
@@ -78,7 +78,7 @@ is only supported within the same _minor_ version.
 
 ## Version 0.5.1:
 
-* Corrected a bug on the `send_metadata` inferrence thingy. Now, all tests are passing.
+* Corrected a bug on the `send_metadata` inference thingy. Now, all tests are passing.
 
 ## Version 0.6.0:
 
@@ -89,7 +89,7 @@ used to ensure "legacy mode", where no parity checking took place. Now, it is a 
 bit all on itself. This leads to much more robust error detection (up to 2bits,
 guaranteed, but you can get lucky with more!).
 * Now you can control the sender more finely with `SenderBuilder`. This includes
-chosing a segment size that fits your needs and chosing the "maximum size" for the
+choosing a segment size that fits your needs and choosing the "maximum size" for the
 queue.
 * And yes, now you can control maximum queue size so that `yaque` doesn't blow up your
 hard drive. This means that some major API changes took place:
@@ -113,14 +113,14 @@ transaction. I could not verify if this invariant always holds. Anyway, there is
 assertion in the code to avoid the worse. If you find such a situation, please fill an
 issue.
 * Dropping the Receiver forced the `state` to be saved, not the `initial_state` (the
-state at the begining of the current transaction). Now, `Drop` calls `Receiver::save`
+state at the beginning of the current transaction). Now, `Drop` calls `Receiver::save`
 so that the behavior will be always consistent.
-* We have a backup strategy for saving the queue! It invlves no asyc stuff, so it will
-only be triggered at the end of a transction. The current criterion is: save at every
-250 items read or every 350ms, whichever comes first. This should dimiinish greatly
+* We have a backup strategy for saving the queue! It involves no async stuff, so it will
+only be triggered at the end of a transaction. The current criterion is: save at every
+250 items read or every 350ms, whichever comes first. This should diminish greatly
 the necessity for external control of the save mechanism.
-* Created a `ReceiverBuilder` to allow people to costumize the way the queue is saved.
-This includes altering the above defaults or disabling queue saving altogther.
+* Created a `ReceiverBuilder` to allow people to customize the way the queue is saved.
+This includes altering the above defaults or disabling queue saving altogether.
 
 
 ## Version 0.6.2:
@@ -143,8 +143,20 @@ leading to clearer code.
 
 ## Version 0.6.4:
 
-* Update dependencies and fix vulerabilities (dependabot).
+* Update dependencies and fix vulnerabilities (dependabot).
 
 ### Contributors:
 
 * [@grant0417](https://github.com/grant0417)
+
+
+## Version 0.6.5:
+
+* Added `Receiver::recv_batch_up_to` and `Receiver::try_recv_batch_up_to` so that you can
+fetch "up to `n`" elements from the queue or wait until one arrives.
+* You can now send and receive empty messages.
+* Fixed typos in the documentation.
+
+### Contributors:
+
+* [@mullr](https://github.com/mullr)

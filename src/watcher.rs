@@ -83,8 +83,7 @@ where
 }
 
 /// Watches *any* removal in a given path.
-pub(crate) fn removal_watcher(path: &Path, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
-{
+pub(crate) fn removal_watcher(path: &Path, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher {
     // Set up watcher:
     let mut watcher =
         notify::recommended_watcher(move |maybe_event: notify::Result<notify::Event>| {
@@ -113,8 +112,7 @@ pub(crate) fn removal_watcher(path: &Path, waker: Arc<Mutex<Option<Waker>>>) -> 
 }
 
 /// Watches a file for changes in its content.
-pub(crate) fn file_watcher(path: &Path, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher
-{
+pub(crate) fn file_watcher(path: &Path, waker: Arc<Mutex<Option<Waker>>>) -> RecommendedWatcher {
     // Set up watcher:
     let mut watcher =
         notify::recommended_watcher(move |maybe_event: notify::Result<notify::Event>| {
