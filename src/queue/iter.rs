@@ -3,25 +3,25 @@ use std::io::{self};
 use std::path::{Path, PathBuf};
 
 use crate::header::Header;
+use crate::state::{QueueState, QueueStatePersistence};
 use crate::sync::{FileGuard, SyncFollower};
 use crate::version::check_queue_version;
-use crate::state::{QueueStatePersistence, QueueState};
 
 use super::try_acquire_recv_lock;
 use super::{segment_filename, HEADER_EOF};
 
 /// An [`Iterator`] that iterates over the elements of the queue, until it hts
 /// the end for the first time. Use this structure instead of
-/// [`crate::Receiver`] if you just need to read the data stored in a queue. 
-/// 
+/// [`crate::Receiver`] if you just need to read the data stored in a queue.
+///
 /// Three good reasons for this are:
-/// 
+///
 /// 1. The API is synchronous, since there is no need to wait for new elements.
 /// 2. There is no transactional mechanism involved, since there is no need for
 /// one and, because of this,
 /// 3. Elements are not buffered in memory, as opposed to what
 /// [`crate::Receiver::recv_batch`] does.
-/// 
+///
 /// And you also get some extra percents of performance from a simpler
 /// implementation. Don't pay for what you don't use!
 pub struct QueueIter {
@@ -83,11 +83,14 @@ impl QueueIter {
         self.state.advance_segment();
         let next_segment = self.state.segment;
 
-        log::debug!("advanced segment from {:?} to {:?}", current_segment, next_segment);
+        log::debug!(
+            "advanced segment from {:?} to {:?}",
+            current_segment,
+            next_segment
+        );
 
         log::debug!("opening segment {}", next_segment);
-        self.sync_follower =
-            SyncFollower::open(segment_filename(&self.base, next_segment))?;
+        self.sync_follower = SyncFollower::open(segment_filename(&self.base, next_segment))?;
 
         Ok(())
     }
@@ -114,7 +117,6 @@ impl QueueIter {
         log::trace!("got header {:?} (read {} bytes)", header, decoded.len());
 
         Ok(decoded)
-
     }
 
     /// Reads one element from the queue.

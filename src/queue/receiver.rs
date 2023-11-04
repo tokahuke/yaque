@@ -64,7 +64,7 @@ impl ReceiverBuilder {
 
     /// Sets the receiver to save its state to the disk at every n-th element.
     /// Set it to `None` to disable this policy.
-    /// 
+    ///
     /// Default value: every 250 elements.
     pub fn save_every_nth(mut self, nth: Option<usize>) -> ReceiverBuilder {
         self.save_every_nth = nth;
@@ -73,11 +73,11 @@ impl ReceiverBuilder {
 
     /// Sets the receiver to save ir state to the disk at every given interval
     /// of time. Set it to `None` to disable this policy.
-    /// 
+    ///
     /// Default value: every 350 milliseconds.
-    /// 
+    ///
     /// # Note:
-    /// 
+    ///
     /// This policy is enforced _synchronously_. This means that there is no
     /// asynchronous behavior involved (i.e. timers). This condition will only
     /// be checked when a new element is pushed to the queue.
@@ -164,7 +164,7 @@ pub struct Receiver {
     read_and_unused: VecDeque<Vec<u8>>,
     /// Save the queue every n operations
     save_every_nth: Option<usize>,
-    /// Save the queue every interval of time. This will be enforced 
+    /// Save the queue every interval of time. This will be enforced
     /// _synchronously_; no timers involved.
     save_every: Option<Duration>,
     /// Number of operations done in this `Receiver`
@@ -326,10 +326,13 @@ impl Receiver {
 
         // With the length, read the data:
         let mut data = vec![0; header.len() as usize];
-        self.tail_follower
-            .read_exact(&mut data)
-            .await
-            .expect("poisoned queue");
+        if header.len() > 0 {
+            // If data size is 0, no need to read any data at all.
+            self.tail_follower
+                .read_exact(&mut data)
+                .await
+                .expect("poisoned queue");
+        }
 
         self.state.advance_position(data.len() as u64);
 
