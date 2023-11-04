@@ -15,7 +15,7 @@
 //! See [this section in Wikipedia](https://en.wikipedia.org/wiki/Hamming_code#General_algorithm).
 
 /// Parity check mask.
-const P0: u32 = 0b11_1111_1111_1111_1111_1111_1111; // just a regular parity chech (not Hamming!)
+const P0: u32 = 0b11_1111_1111_1111_1111_1111_1111; // just a regular parity check (not Hamming!)
 /// Hamming first parity bit mask.
 const P1: u32 = 0b10_1010_1010_1010_1101_0101_1011;
 /// Hamming second parity bit mask.

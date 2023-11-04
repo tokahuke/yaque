@@ -1,6 +1,6 @@
 //! A persistent mutex implementation using the atomicity of [`OpenOptions::create_new`]
 //!
-//! Please note that this `Mutex` just really works if other processeses in your system
+//! Please note that this `Mutex` just really works if other processes in your system
 //! are willing to "play nice" with you. In most systems (Unix-like), locks are mostly
 //! advisory.
 
@@ -18,11 +18,11 @@ pub struct Mutex {
 
 impl Mutex {
     /// Opens a new mutex, given the path for a folder in which the mutex will be mounted.
-    /// This will create a new floder if one does not exist yet.
+    /// This will create a new folder if one does not exist yet.
     ///
     /// # Errors
     ///
-    /// This function fails if it cannot create the folder which is giong to contain the
+    /// This function fails if it cannot create the folder which is going to contain the
     /// mutex.
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Mutex> {
         fs::create_dir_all(&path)?;
@@ -31,7 +31,7 @@ impl Mutex {
         })
     }
 
-    /// Locks this mutex, awaitng for it to unlock if it is locked.
+    /// Locks this mutex, awaiting for it to unlock if it is locked.
     pub async fn lock(&self) -> io::Result<MutexGuard> {
         let file_guard = FileGuard::lock(self.path.join("lock")).await?;
         let file = OpenOptions::new()
@@ -46,7 +46,7 @@ impl Mutex {
         })
     }
 
-    /// Tries to lock this mutex, returnin `None` if it is locked.
+    /// Tries to lock this mutex, returning `None` if it is locked.
     pub fn try_lock(&self) -> io::Result<Option<MutexGuard>> {
         let file_guard = FileGuard::try_lock(self.path.join("lock"))?;
 
@@ -75,13 +75,13 @@ pub struct MutexGuard {
 }
 
 impl MutexGuard {
-    /// Reas all the contents of the content file into a vector.
+    /// Reads all the contents of the content file into a vector.
     pub fn read(&self) -> io::Result<Vec<u8>> {
         (&self.file).seek(io::SeekFrom::Start(0))?;
         (&self.file).bytes().collect::<io::Result<Vec<_>>>()
     }
 
-    /// Writes some data to the content file, ovewritting all the previous content.
+    /// Writes some data to the content file, overwriting all the previous content.
     pub fn write<D: AsRef<[u8]>>(&self, data: D) -> io::Result<()> {
         (&self.file).seek(io::SeekFrom::Start(0))?;
         self.file.set_len(0)?;

@@ -353,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn test_recv_timeout_dealyed() {
+    fn test_recv_timeout_delayed() {
         futures::executor::block_on(async move {
             let (mut sender, mut receiver) = channel("data/recv-timeout-delayed").unwrap();
 
@@ -407,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn test_recv_batch_timeout_dealyed_1() {
+    fn test_recv_batch_timeout_delayed_1() {
         futures::executor::block_on(async move {
             let (mut sender, mut receiver) = channel("data/recv-batch-timeout-delayed-1").unwrap();
 
@@ -431,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn test_recv_batch_timeout_dealyed_2() {
+    fn test_recv_batch_timeout_delayed_2() {
         futures::executor::block_on(async move {
             let (mut sender, mut receiver) = channel("data/recv-batch-timeout-delayed-2").unwrap();
 

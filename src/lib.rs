@@ -150,7 +150,7 @@
 //!
 //! Unfortunately, there are also times when you get `aborted` or `killed`. These
 //! signals cannot be handled by any library whatsoever. When this happens, not
-//! everything is lost yet. We provied a whole module, [`recovery`],
+//! everything is lost yet. We provided a whole module, [`recovery`],
 //! to aid you in automatic queue recovery. Please check the module for the
 //! specific function names. From an architectural perspective, we offer two
 //! different approaches to queue recovery, which may be suitable to different
@@ -169,7 +169,7 @@
 //! 2. Recover with loss: we can also reconstruct an _upper bound_ for the
 //! actual state of the queue: the bottom of the second smallest segment in
 //! the queue. In this case, the smallest segment is simply erased and the
-//! receiver caries on as if nothing has happened. If replays are intollerable,
+//! receiver caries on as if nothing has happened. If replays are intolerable,
 //! but some data loss is, this might be the right alternative for you. You can
 //! limit data loss by constraining the segment size, configuring this option on
 //! [`SenderBuilder`].

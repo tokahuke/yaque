@@ -62,10 +62,10 @@ pub(crate) fn get_queue_size<P: AsRef<Path>>(base: P) -> io::Result<QueueSize> {
 }
 
 /// A builder for the sender side of the queue. Use this if you want to have fine-grained control
-/// over the configuration of the queue. Most defaults sould be ok of most applications.
+/// over the configuration of the queue. Most defaults should be ok of most applications.
 pub struct SenderBuilder {
     /// The segment size in bytes that will trigger a new segment to be created. Segments an be
-    /// bigger than this to accomodate the last element, but nothing beyond that (each segment
+    /// bigger than this to accommodate the last element, but nothing beyond that (each segment
     /// must store at least one element).
     ///
     /// Default value: 4MB
@@ -73,11 +73,11 @@ pub struct SenderBuilder {
 
     /// The queue size that will block the sender from creating a new segment (until the receiver
     /// catches up, deleting old segments). The queue can get bigger than that, but only to
-    /// accomodate the last segment (the queue must have at least one segment). Set this to `None`
+    /// accommodate the last segment (the queue must have at least one segment). Set this to `None`
     /// to create an unbounded queue.
     ///
     /// This value will be ignored if the queue has only one segment, since the queue would
-    /// deadlock otherwise. It is recomended that you set `max_queue_size >> segment_size`.
+    /// deadlock otherwise. It is recommended that you set `max_queue_size >> segment_size`.
     ///
     /// Default value: None
     max_queue_size: Option<NonZeroU64>,
@@ -99,7 +99,7 @@ impl SenderBuilder {
     }
 
     /// The segment size in bytes that will trigger a new segment to be created. Segments an be
-    /// bigger than this to accomodate the last element, but nothing beyond that (each segment
+    /// bigger than this to accommodate the last element, but nothing beyond that (each segment
     /// must store at least one element).
     ///
     /// Default value: `4 * 1024 * 1024`, or 4MB.
@@ -115,11 +115,11 @@ impl SenderBuilder {
 
     /// The queue size that will block the sender from creating a new segment (until the receiver
     /// catches up, deleting old segments). The queue can get bigger than that, but only to
-    /// accomodate the last segment (the queue must have at least one segment). Set this to `None`
+    /// accommodate the last segment (the queue must have at least one segment). Set this to `None`
     /// to create an unbounded queue.
     ///
     /// This value will be ignored if the queue has only one segment, since the queue would
-    /// deadlock otherwise. It is recomended that you set `max_queue_size >> segment_size`.
+    /// deadlock otherwise. It is recommended that you set `max_queue_size >> segment_size`.
     ///
     /// Default value: `None`
     ///
@@ -149,7 +149,7 @@ impl SenderBuilder {
         // Versioning stuff (this should be lightning-fast. Therefore, shameless block):
         check_queue_version(base.as_ref())?;
 
-        // Acquire lock and guess statestate:
+        // Acquire lock and guess state:
         let file_guard = try_acquire_send_lock(base.as_ref())?;
         let state = QueueState::for_send_metadata(base.as_ref())?;
 
@@ -185,7 +185,7 @@ pub struct Sender {
     _file_guard: FileGuard,
     file: io::BufWriter<File>,
     state: QueueState,
-    deletion_stream: Option<DeletionEvent>, // lazy inited!
+    deletion_stream: Option<DeletionEvent>, // lazy initiated!
     base: PathBuf,
 }
 
@@ -210,7 +210,7 @@ impl Sender {
     ///
     /// 2. Handle possible IO errors in sending. The `drop` implementation will
     /// ignore (but log) any io errors, which may lead to data loss in an
-    /// unreliable filesystem. It was implmemented this way because no errors
+    /// unreliable filesystem. It was implemented this way because no errors
     /// are allowed to propagate on drop and panicking will abort the program if
     /// drop is called during a panic.
     #[deprecated(
@@ -283,7 +283,7 @@ impl Sender {
             // If so, create a new file, if you are able to:
             if !self.try_cap_off_and_move()? {
                 log::trace!(
-                    "could not capp off and move. The queue `{:?}` is full",
+                    "could not cap off and move. The queue `{:?}` is full",
                     self.base
                 );
 
@@ -343,7 +343,7 @@ impl Sender {
                 Err(TrySendError::Io(err)) => break Err(err),
                 Err(TrySendError::QueueFull { item, .. }) => {
                     data = item; // the "unmove"!
-                    self.deletion_stream().await // prevents spinlock
+                    self.deletion_stream().await // prevents spin lock
                 }
             }
         }
@@ -402,7 +402,7 @@ impl Sender {
                 Err(TrySendError::Io(err)) => break Err(err),
                 Err(TrySendError::QueueFull { item, .. }) => {
                     it = item; // the "unmove"!
-                    self.deletion_stream().await // prevents spinlock
+                    self.deletion_stream().await // prevents spin lock
                 }
             }
         }

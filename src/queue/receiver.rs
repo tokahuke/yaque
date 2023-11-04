@@ -79,7 +79,7 @@ impl ReceiverBuilder {
     /// # Note:
     /// 
     /// This policy is enforced _synchronously_. This means that there is no
-    /// asynchronous behavior involved (i.e. timers). This condidition will only
+    /// asynchronous behavior involved (i.e. timers). This condition will only
     /// be checked when a new element is pushed to the queue.
     pub fn save_every(mut self, duration: Option<Duration>) -> ReceiverBuilder {
         self.save_every = duration;
@@ -152,14 +152,14 @@ pub struct Receiver {
     maybe_header: Option<[u8; 4]>,
     /// The current queue state.
     state: QueueState,
-    /// The queue state as it was in the begining of the current transaction.
+    /// The queue state as it was in the beginning of the current transaction.
     initial_state: QueueState,
     /// The queue state saver/loader.
     persistence: QueueStatePersistence,
     /// Use this queue to buffer elements and provide "atomicity in an
     /// asynchronous context". We need to backup the state of the queue before
     /// the read so as to restore it as the "initial state" (the _actual_ state
-    /// of the queue) at the end of a transaction. Otherwise, dataloss would
+    /// of the queue) at the end of a transaction. Otherwise, data loss would
     /// occur.
     read_and_unused: VecDeque<Vec<u8>>,
     /// Save the queue every n operations
@@ -197,7 +197,7 @@ impl Receiver {
     }
 
     /// Puts the queue in another position in another segment. This forcibly
-    /// discards the old tail follower and fethces a fresh new one, so be
+    /// discards the old tail follower and fetches a fresh new one, so be
     /// careful.
     fn go_to(&mut self, state: QueueState) -> io::Result<()> {
         let different_segment = self.state.segment != state.segment;
@@ -314,10 +314,10 @@ impl Receiver {
     /// Reads one element from the queue, inevitably advancing the file reader.
     /// Instead of returning the element, this function puts it in the "read and
     /// unused" queue to be used later. This enables us to construct "atomic in
-    /// async context" guarantees for the higher level functions. The ideia is to
+    /// async context" guarantees for the higher level functions. The idea is to
     /// _drain the queue_ only after the last `.await` in the block.
     ///
-    /// This operation is also itlsef atomic. If the returned future is not
+    /// This operation is also itself atomic. If the returned future is not
     /// polled to completion, as, e.g., when calling `select`, the operation
     /// will count as not done.
     async fn read_one(&mut self) -> io::Result<()> {
@@ -370,7 +370,7 @@ impl Receiver {
     fn drain(&mut self, n: usize) -> Vec<Vec<u8>> {
         let mut data = Vec::with_capacity(n);
 
-        // (careful! need to check if read something to avoid an eroneous POP
+        // (careful! need to check if read something to avoid an erroneous POP
         // from the queue)
         if n > 0 {
             while let Some(element) = self.read_and_unused.pop_front() {
@@ -387,7 +387,7 @@ impl Receiver {
 
     /// Saves the receiver queue state. You do not need to use method in most
     /// circumstances, since it is automatically done on drop (yes, it will be
-    /// called eve if your thread panics). However, you cawn use this function to
+    /// called eve if your thread panics). However, you can use this function to
     ///
     /// 1. Make periodical backups. Use an external timer implementation for this.
     ///
@@ -397,7 +397,7 @@ impl Receiver {
     /// implemented this way because no errors are allowed to propagate on drop
     /// and panicking will abort the program if drop is called during a panic.
     pub fn save(&mut self) -> io::Result<()> {
-        self.persistence.save(&self.initial_state) // this aviods saving an in-flight
+        self.persistence.save(&self.initial_state) // this avoids saving an in-flight
     }
 
     fn maybe_save(&mut self) -> io::Result<()> {
@@ -499,7 +499,7 @@ impl Receiver {
         }))
     }
 
-    /// Removes exaclty 'n' elements from the queue. If there aren't
+    /// Removes exactly 'n' elements from the queue. If there aren't
     /// enough elements, it will wait until there are. Returns a guard
     /// that will only commit state changes to the queue when dropped.
     ///
@@ -615,7 +615,7 @@ impl Receiver {
 
     /// Tries to remove a number of elements from the queue until a given future
     ///  finished. The values taken from the queue will be the values that were
-    /// available durng the whole execution of the future and thus less than `n`
+    /// available during the whole execution of the future and thus less than `n`
     /// elements might be returned. The returned items are wrapped in a guard
     /// that will only commit state changes to the queue when dropped.
     ///
