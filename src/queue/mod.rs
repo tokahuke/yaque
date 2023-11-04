@@ -4,7 +4,7 @@ mod iter;
 mod receiver;
 mod sender;
 
-pub use iter::{QueueIter};
+pub use iter::QueueIter;
 pub use receiver::{Receiver, ReceiverBuilder, RecvGuard};
 pub use sender::{Sender, SenderBuilder};
 
@@ -665,6 +665,100 @@ mod tests {
         }
 
         assert_eq!(count, 25);
+    }
+
+    // test simple try_recv_batch uses.
+    #[test]
+    fn test_try_recv_batch() {
+        let data = data_lots_of_data().take(100).collect::<Vec<_>>();
+
+        // Populate a queue:
+        let mut sender = SenderBuilder::new()
+            .segment_size(512)
+            .open("data/try-recv-batch")
+            .unwrap();
+
+        let mut receiver = Receiver::open("data/try-recv-batch").unwrap();
+
+        // only works for multiples of 25, up to 25
+        for recv_size in [1, 5, 25] {
+            sender.try_send_batch(&data[..25]).unwrap();
+
+            let mut count = 0;
+            loop {
+                match receiver.try_recv_batch(recv_size) {
+                    Ok(items) => {
+                        for item in items.iter() {
+                            assert_eq!(&*item, &data[count]);
+                            count += 1;
+                        }
+                        items.commit().unwrap();
+                    }
+                    Err(TryRecvError::Io(err)) => Err(err).unwrap(),
+                    Err(TryRecvError::QueueEmpty) => break,
+                }
+            }
+
+            assert_eq!(count, 25);
+        }
+    }
+
+    // test simple try_recv_batch_up_to uses.
+    #[test]
+    fn test_try_recv_batch_up_to() {
+        let data = data_lots_of_data().take(100).collect::<Vec<_>>();
+
+        // Populate a queue:
+        let mut sender = SenderBuilder::new()
+            .segment_size(512)
+            .open("data/try-recv-batch-up-to")
+            .unwrap();
+
+        let mut receiver = Receiver::open("data/try-recv-batch-up-to").unwrap();
+
+        for send_size in [1, 10, 25, 100] {
+            for recv_size in [1, 7, 25, 30, 100] {
+                println!("send_size: {send_size}, recv_size: {recv_size}");
+
+                sender.try_send_batch(&data[..send_size]).unwrap();
+
+                let mut count = 0;
+                loop {
+                    match receiver.try_recv_batch_up_to(recv_size) {
+                        Ok(items) => {
+                            for item in items.iter() {
+                                assert_eq!(&*item, &data[count]);
+                                count += 1;
+                            }
+                            items.commit().unwrap();
+                        }
+                        Err(TryRecvError::Io(err)) => Err(err).unwrap(),
+                        Err(TryRecvError::QueueEmpty) => break,
+                    }
+                }
+
+                assert_eq!(count, send_size);
+            }
+        }
+    }
+
+    #[test]
+    fn test_try_recv_batch_up_to_zero() {
+        // Populate a queue:
+        let mut sender = SenderBuilder::new()
+            .segment_size(512)
+            .open("data/try-recv-batch-up-to-zero")
+            .unwrap();
+
+        let mut receiver = Receiver::open("data/try-recv-batch-up-to-zero").unwrap();
+        sender.try_send_batch([[1]]).unwrap();
+
+        let no_items = receiver
+            .try_recv_batch_up_to(0)
+            .unwrap()
+            .try_into_inner()
+            .unwrap();
+        assert!(no_items.is_empty());
     }
 
     #[test]

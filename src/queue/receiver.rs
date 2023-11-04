@@ -116,7 +116,8 @@ impl ReceiverBuilder {
         log::trace!("receiver lock acquired. Receiver state now is {:?}", state);
 
         // Put the needle on the groove (oh! the 70's):
-        let mut tail_follower = TailFollower::open(&segment_filename(base.as_ref(), state.segment))?;
+        let mut tail_follower =
+            TailFollower::open(&segment_filename(base.as_ref(), state.segment))?;
         tail_follower.seek(io::SeekFrom::Start(state.position))?;
 
         log::trace!("last segment opened fo reading");
@@ -498,8 +499,9 @@ impl Receiver {
         }))
     }
 
-    /// Removes a number of elements from the queue. The returned value is a
-    /// guard that will only commit state changes to the queue when dropped.
+    /// Removes exaclty 'n' elements from the queue. If there aren't
+    /// enough elements, it will wait until there are. Returns a guard
+    /// that will only commit state changes to the queue when dropped.
     ///
     /// # Note
     ///
@@ -532,6 +534,48 @@ impl Receiver {
         })
     }
 
+    /// Remove up to 'n' elements from the queue.
+    ///
+    /// If the queue has data in it, this will immediately remove the
+    /// first 'n' elements.  If the queue is empty, it will await
+    /// until there is some data to return, then return the first
+    /// element.
+    ///
+    /// The returned value is a guard that will only commit state
+    /// changes to the queue when dropped.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if it has to start reading a new segment and
+    /// it is not able to set up the notification handler to watch for file
+    /// changes.
+    pub async fn recv_batch_up_to(&mut self, n: usize) -> io::Result<RecvGuard<'_, Vec<Vec<u8>>>> {
+        self.begin();
+
+        // First, read everything we currently have available into read_and_unused
+        while self.read_and_unused.len() < n {
+            if self.read_one().now_or_never().is_none() {
+                break;
+            }
+        }
+
+        // Then, if it's empty and we're looking for /something/, block until we have at least one thing
+        if n > 0 {
+            if self.read_and_unused.is_empty() {
+                self.read_one().await?;
+            }
+        }
+
+        // And now, drain!
+        let data = self.drain(n);
+
+        Ok(RecvGuard {
+            receiver: self,
+            item: Some(data),
+            was_finished: false,
+        })
+    }
+
     /// Tries to remove a number of elements from the queue. The returned value
     /// is a guard that will only commit state changes to the queue when
     /// dropped.
@@ -546,6 +590,27 @@ impl Receiver {
         n: usize,
     ) -> Result<RecvGuard<'_, Vec<Vec<u8>>>, TryRecvError> {
         TryRecvError::result_from_option(self.recv_batch(n).now_or_never())
+    }
+
+    /// Remove up to 'n' elements from the queue
+    ///
+    /// If the queue has data in it, this will immediately remove the
+    /// first 'n' elements.  If the queue is empty, returns
+    /// Err(TryRecvError::QueueEmpty).
+    ///
+    /// The returned value is a guard that will only commit state
+    /// changes to the queue when dropped.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if it has to start reading a new segment and
+    /// it is not able to set up the notification handler to watch for file
+    /// changes.
+    pub fn try_recv_batch_up_to(
+        &mut self,
+        n: usize,
+    ) -> Result<RecvGuard<'_, Vec<Vec<u8>>>, TryRecvError> {
+        TryRecvError::result_from_option(self.recv_batch_up_to(n).now_or_never())
     }
 
     /// Tries to remove a number of elements from the queue until a given future

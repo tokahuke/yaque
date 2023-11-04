@@ -52,6 +52,7 @@ impl<T> TrySendError<T> {
 }
 
 /// An error that occurs when trying to receive from an empty queue.
+#[derive(Debug)]
 pub enum TryRecvError {
     /// An underlying IO error occurred.
     Io(io::Error),
