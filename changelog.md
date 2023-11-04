@@ -150,7 +150,7 @@ leading to clearer code.
 * [@grant0417](https://github.com/grant0417)
 
 
-## Version 0.6.5:
+## Version 0.6.6:
 
 * Added `Receiver::recv_batch_up_to` and `Receiver::try_recv_batch_up_to` so that you can
 fetch "up to `n`" elements from the queue or wait until one arrives.
