@@ -1,3 +1,7 @@
+[![crates.io](https://img.shields.io/crates/d/yaque)](https://crates.io/crates/yaque)
+[![docs.rs](https://img.shields.io/docsrs/yaque)](https://docs.rs/yaque/latest/yaque/)
+
+
 # Yaque: Yet Another QUEue
 
 Yaque is yet another disk-backed persistent queue (and mutex) for Rust. It
