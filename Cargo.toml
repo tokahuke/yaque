@@ -13,13 +13,15 @@ exclude = ["data"]
 resolver = "2"
 
 [features]
-default = ["recovery", "log-trace"]
+default = ["recovery", "log-trace", "crossbeam-channel"]
 recovery = ["sysinfo"]
 log-trace = []  # test only 
 log-debug = []  # test only
+crossbeam-channel = ["notify/default"]
+no-crossbeam-channel = ["notify/macos_kqueue"]
 
 [dependencies]
-notify = "5.1.0"
+notify = { version = "5.1.0", default-features = false }
 log = "0.4.17"
 sysinfo = { version = "0.28.0", default-features = false, optional = true }
 futures = "0.3.26"
